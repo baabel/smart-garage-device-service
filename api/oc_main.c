@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "oc_config.h"
 #include "port/oc_assert.h"
 #include "port/oc_clock.h"
 #include "port/oc_connectivity.h"
@@ -47,6 +48,7 @@
 #ifdef OC_PKI
 #include "security/oc_keypair.h"
 #endif /* OC_PKI */
+#include "security/oc_sdi.h"
 #endif /* OC_SECURITY */
 
 #ifdef OC_CLOUD
@@ -250,6 +252,8 @@ oc_main_init(const oc_handler_t *handler)
     OC_DBG("oc_main_init(): loading ECDSA keypair");
     oc_sec_load_ecdsa_keypair(device);
 #endif /* OC_PKI */
+    OC_DBG("oc_main_init(): loading sdi");
+    oc_sec_load_sdi(device);
   }
 #endif
 
@@ -307,6 +311,7 @@ oc_main_shutdown(void)
 #ifdef OC_PKI
   oc_free_ecdsa_keypairs();
 #endif /* OC_PKI */
+  oc_sec_sdi_free();
   oc_tls_shutdown();
 #endif /* OC_SECURITY */
 

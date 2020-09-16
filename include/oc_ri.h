@@ -27,8 +27,7 @@
 #include "util/oc_etimer.h"
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 typedef enum { OC_GET = 1, OC_POST, OC_PUT, OC_DELETE } oc_method_t;
@@ -65,6 +64,34 @@ typedef enum {
   OC_IGNORE,
   OC_PING_TIMEOUT
 } oc_status_t;
+
+/* OCF payload Content-Formats */
+typedef enum {
+  TEXT_PLAIN = 0,
+  TEXT_XML = 1,
+  TEXT_CSV = 2,
+  TEXT_HTML = 3,
+  IMAGE_GIF = 21,
+  IMAGE_JPEG = 22,
+  IMAGE_PNG = 23,
+  IMAGE_TIFF = 24,
+  AUDIO_RAW = 25,
+  VIDEO_RAW = 26,
+  APPLICATION_LINK_FORMAT = 40,
+  APPLICATION_XML = 41,
+  APPLICATION_OCTET_STREAM = 42,
+  APPLICATION_RDF_XML = 43,
+  APPLICATION_SOAP_XML = 44,
+  APPLICATION_ATOM_XML = 45,
+  APPLICATION_XMPP_XML = 46,
+  APPLICATION_EXI = 47,
+  APPLICATION_FASTINFOSET = 48,
+  APPLICATION_SOAP_FASTINFOSET = 49,
+  APPLICATION_JSON = 50,
+  APPLICATION_X_OBIX_BINARY = 51,
+  APPLICATION_CBOR = 60,
+  APPLICATION_VND_OCF_CBOR = 10000
+} oc_content_format_t;
 
 typedef struct oc_separate_response_s oc_separate_response_t;
 
@@ -110,6 +137,7 @@ typedef enum {
   OCF_SEC_ACL,
   OCF_SEC_AEL,
   OCF_SEC_CRED,
+  OCF_SEC_SDI,
   OCF_SEC_SP,
 #ifdef OC_PKI
   OCF_SEC_CSR,
@@ -132,6 +160,9 @@ typedef struct oc_request_t
   const char *query;
   size_t query_len;
   oc_rep_t *request_payload;
+  const uint8_t *_payload;
+  size_t _payload_len;
+  oc_content_format_t content_format;
   oc_response_t *response;
 } oc_request_t;
 
@@ -242,6 +273,8 @@ int oc_ri_get_query_value(const char *query, size_t query_len, const char *key,
                           char **value);
 
 oc_interface_mask_t oc_ri_get_interface_mask(char *iface, size_t if_len);
+
+bool oc_ri_is_app_resource_valid(oc_resource_t *resource);
 
 #ifdef __cplusplus
 }

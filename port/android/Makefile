@@ -66,8 +66,20 @@ export ANDROID_BASE := "${HOME}/android-arm-${ANDROID_API}"
 else
 export ANDROID_BASE := "${NDK_HOME}"
 endif
+
+ifeq ($(ANDROID_ABI),armeabi)
+export ANDROID_HOST := arm-linux-androideabi-
+endif
+ifeq ($(ANDROID_ABI),x86_64)
+export ANDROID_HOST := x86_64-linux-android-
+endif
+ifeq ($(ANDROID_ABI),arm64-v8a)
+export ANDROID_HOST := aarch64-linux-android-
+endif
+
 # Compiler prefix
-ANDROID_HOST := arm-linux-androideabi-
+
+export ANDROID_HOST ?= arm-linux-androideabi-
 
 BIN_BASE := ${ANDROID_BASE}/bin/${ANDROID_HOST}
 ifeq ($(origin CC),default)
@@ -196,12 +208,13 @@ endif
 
 ifeq ($(SWUPDATE),1)
 	EXTRA_CFLAGS += -DOC_SOFTWARE_UPDATE
+	export SWUPDATE
 endif
 
 ifneq ($(SECURE),0)
 	SRC += $(addprefix ../../security/,oc_acl.c oc_cred.c oc_doxm.c oc_pstat.c \
 		oc_tls.c oc_svr.c oc_store.c oc_pki.c oc_certs.c oc_sp.c oc_keypair.c \
-		oc_csr.c oc_roles.c)
+		oc_csr.c oc_roles.c oc_audit.c oc_ael.c oc_sdi.c)
 	SRC_COMMON += $(addprefix $(MBEDTLS_DIR)/library/,${DTLS})
 	MBEDTLS_PATCH_FILE := $(MBEDTLS_DIR)/patched.txt
 ifeq ($(DYNAMIC),1)

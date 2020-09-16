@@ -94,9 +94,7 @@ coap_remove_observer_handle_by_uri(oc_endpoint_t *endpoint, const char *uri,
         (oc_string_len(obs->url) == (size_t)uri_len &&
          memcmp(oc_string(obs->url), uri, uri_len) == 0) &&
         obs->iface_mask == iface_mask) {
-      obs->resource->num_observers--;
-      oc_list_remove(observers_list, obs);
-      oc_memb_free(&observers_memb, obs);
+      coap_remove_observer(obs);
       removed++;
       break;
     }
@@ -711,33 +709,32 @@ coap_notify_observers(oc_resource_t *resource,
         continue;
       }
       if (response.separate_response != NULL) {
-        if (response_buf->code == oc_status_code(OC_STATUS_OK)) {
-          coap_packet_t req[1];
+        coap_packet_t req[1];
 #ifdef OC_TCP
-          if (obs->endpoint.flags & TCP) {
-            coap_tcp_init_message(req, COAP_GET);
-          } else
+        if (obs->endpoint.flags & TCP) {
+          coap_tcp_init_message(req, COAP_GET);
+        } else
 #endif /* OC_TCP */
-          {
-            coap_udp_init_message(req, COAP_TYPE_NON, COAP_GET, 0);
-          }
-          memcpy(req->token, obs->token, obs->token_len);
-          req->token_len = obs->token_len;
-
-          coap_set_header_uri_path(req, oc_string(resource->uri),
-                                   oc_string_len(resource->uri));
-
-          OC_DBG("coap_notify_observers: Creating separate response for "
-                 "notification");
-#ifdef OC_BLOCK_WISE
-          if (coap_separate_accept(req, response.separate_response,
-                                   &obs->endpoint, 0, obs->block2_size) == 1)
-#else  /* OC_BLOCK_WISE */
-          if (coap_separate_accept(req, response.separate_response,
-                                   &obs->endpoint, 0) == 1)
-#endif /* !OC_BLOCK_WISE */
-            response.separate_response->active = 1;
+        {
+          coap_udp_init_message(req, COAP_TYPE_NON, COAP_GET, 0);
         }
+        memcpy(req->token, obs->token, obs->token_len);
+        req->token_len = obs->token_len;
+
+        coap_set_header_uri_path(req, oc_string(resource->uri),
+                                 oc_string_len(resource->uri));
+
+        OC_DBG("coap_notify_observers: Creating separate response for "
+               "notification");
+#ifdef OC_BLOCK_WISE
+        if (coap_separate_accept(req, response.separate_response,
+                                 &obs->endpoint, obs->obs_counter,
+                                 obs->block2_size) == 1)
+#else  /* OC_BLOCK_WISE */
+        if (coap_separate_accept(req, response.separate_response,
+                                 &obs->endpoint, obs->obs_counter) == 1)
+#endif /* !OC_BLOCK_WISE */
+          response.separate_response->active = 1;
       } // separate response
       else {
         OC_DBG("coap_notify_observers: notifying observer");
@@ -825,14 +822,9 @@ coap_notify_observers(oc_resource_t *resource,
           } else {
             coap_set_header_observe(notification, 1);
           }
-#ifdef OC_SPEC_VER_OIC
-          if (obs->endpoint.version == OIC_VER_1_1_0) {
-            coap_set_header_content_format(notification, APPLICATION_CBOR);
-          } else
-#endif /* OC_SPEC_VER_OIC */
-          {
+          if (response_buf->content_format > 0) {
             coap_set_header_content_format(notification,
-                                           APPLICATION_VND_OCF_CBOR);
+                                           response_buf->content_format);
           }
           coap_set_token(notification, obs->token, obs->token_len);
           transaction = coap_new_transaction(coap_get_mid(), &obs->endpoint);

@@ -145,6 +145,19 @@ oc_ri_get_app_resources(void)
 {
   return oc_list_head(app_resources);
 }
+
+bool
+oc_ri_is_app_resource_valid(oc_resource_t *resource)
+{
+  oc_resource_t *res = oc_ri_get_app_resources();
+  while (res) {
+    if (res == resource) {
+      return true;
+    }
+    res = res->next;
+  }
+  return false;
+}
 #endif
 
 int
@@ -262,6 +275,8 @@ stop_processes(void)
 oc_resource_t *
 oc_ri_get_app_resource_by_uri(const char *uri, size_t uri_len, size_t device)
 {
+  if (!uri || uri_len == 0)
+    return NULL;
   int skip = 0;
   if (uri[0] != '/')
     skip = 1;
@@ -435,6 +450,8 @@ poll_event_callback_timers(oc_list_t list, struct oc_memb *cb_pool)
         OC_PROCESS_CONTEXT_BEGIN(&timed_callback_events);
         oc_etimer_restart(&event_cb->timer);
         OC_PROCESS_CONTEXT_END(&timed_callback_events);
+        event_cb = oc_list_head(list);
+        continue;
       }
     }
 
@@ -617,7 +634,7 @@ static void
 oc_ri_audit_log(oc_method_t method, oc_resource_t *resource,
                 oc_endpoint_t *endpoint)
 {
-  static const size_t LINE_WIDTH = 80;
+#define LINE_WIDTH 80
   char aux_arr[6][LINE_WIDTH];
   memset(aux_arr, 0, sizeof(aux_arr));
   char *aux[] = { aux_arr[0], aux_arr[1], aux_arr[2],
@@ -714,6 +731,7 @@ oc_ri_invoke_coap_entity_handler(void *request, void *response, uint8_t *buffer,
    */
   response_buffer.code = 0;
   response_buffer.response_length = 0;
+  response_buffer.content_format = 0;
 
   response_obj.separate_response = NULL;
   response_obj.response_buffer = &response_buffer;
@@ -724,17 +742,23 @@ oc_ri_invoke_coap_entity_handler(void *request, void *response, uint8_t *buffer,
   request_obj.query_len = 0;
   request_obj.resource = NULL;
   request_obj.origin = endpoint;
+  request_obj._payload = NULL;
+  request_obj._payload_len = 0;
 
   /* Initialize OCF interface selector. */
   oc_interface_mask_t iface_query = 0, iface_mask = 0;
 
   /* Obtain request uri from the CoAP packet. */
-  const char *uri_path;
+  const char *uri_path = NULL;
   size_t uri_path_len = coap_get_header_uri_path(request, &uri_path);
 
   /* Obtain query string from CoAP packet. */
   const char *uri_query = 0;
   size_t uri_query_len = coap_get_header_uri_query(request, &uri_query);
+
+  /* Read the Content-Format CoAP option in the request */
+  oc_content_format_t cf = 0;
+  coap_get_header_content_format(request, &cf);
 
   if (uri_query_len) {
     request_obj.query = uri_query;
@@ -760,7 +784,9 @@ oc_ri_invoke_coap_entity_handler(void *request, void *response, uint8_t *buffer,
 #else  /* OC_BLOCK_WISE */
   payload_len = coap_get_payload(request, &payload);
 #endif /* !OC_BLOCK_WISE */
-
+  request_obj._payload = payload;
+  request_obj._payload_len = (size_t)payload_len;
+  request_obj.content_format = cf;
 #ifndef OC_DYNAMIC_ALLOCATION
   char rep_objects_alloc[OC_MAX_NUM_REP_OBJECTS];
   oc_rep_t rep_objects_pool[OC_MAX_NUM_REP_OBJECTS];
@@ -774,7 +800,8 @@ oc_ri_invoke_coap_entity_handler(void *request, void *response, uint8_t *buffer,
 #endif /* OC_DYNAMIC_ALLOCATION */
   oc_rep_set_pool(&rep_objects);
 
-  if (payload_len > 0) {
+  if (payload_len > 0 &&
+      (cf == APPLICATION_CBOR || cf == APPLICATION_VND_OCF_CBOR)) {
     /* Attempt to parse request payload using tinyCBOR via oc_rep helper
      * functions. The result of this parse is a tree of oc_rep_t structures
      * which will reflect the schema of the payload.
@@ -935,7 +962,7 @@ oc_ri_invoke_coap_entity_handler(void *request, void *response, uint8_t *buffer,
     }
   }
 
-  if (payload_len) {
+  if (request_obj.request_payload) {
     /* To the extent that the request payload was parsed, free the
      * payload structure (and return its memory to the pool).
      */
@@ -1147,13 +1174,9 @@ oc_ri_invoke_coap_entity_handler(void *request, void *response, uint8_t *buffer,
       coap_set_payload(response, response_buffer.buffer,
                        response_buffer.response_length);
 #endif /* !OC_BLOCK_WISE */
-#ifdef OC_SPEC_VER_OIC
-      if (endpoint->version == OIC_VER_1_1_0) {
-        coap_set_header_content_format(response, APPLICATION_CBOR);
-      } else
-#endif /* OC_SPEC_VER_OIC */
-      {
-        coap_set_header_content_format(response, APPLICATION_VND_OCF_CBOR);
+      if (response_buffer.content_format > 0) {
+        coap_set_header_content_format(response,
+                                       response_buffer.content_format);
       }
     }
 
@@ -1202,7 +1225,6 @@ notify_client_cb_503(oc_client_cb_t *cb)
   client_response.client_cb = cb;
   client_response.endpoint = &cb->endpoint;
   client_response.observe_option = -1;
-  client_response.payload = 0;
   client_response.user_data = cb->user_data;
   client_response.code = OC_STATUS_SERVICE_UNAVAILABLE;
 
@@ -1301,12 +1323,11 @@ oc_ri_invoke_client_cb(void *response, oc_client_cb_t *cb,
 #endif /* OC_BLOCK_WISE */
 {
   endpoint->version = OCF_VER_1_0_0;
+  oc_content_format_t cf = 0;
+  coap_get_header_content_format(response, &cf);
 #ifdef OC_SPEC_VER_OIC
-  unsigned int cf = 0;
-  if (coap_get_header_content_format(response, &cf) == 1) {
-    if (cf == APPLICATION_CBOR) {
-      endpoint->version = OIC_VER_1_1_0;
-    }
+  if (cf == APPLICATION_CBOR) {
+    endpoint->version = OIC_VER_1_1_0;
   }
 #endif /* OC_SPEC_VER_OIC */
 
@@ -1323,6 +1344,9 @@ oc_ri_invoke_client_cb(void *response, oc_client_cb_t *cb,
   client_response.endpoint = endpoint;
   client_response.observe_option = -1;
   client_response.payload = 0;
+  client_response._payload = 0;
+  client_response._payload_len = 0;
+  client_response.content_format = cf;
   client_response.user_data = cb->user_data;
   for (i = 0; i < __NUM_OC_STATUS_CODES__; i++) {
     if (oc_coap_status_codes[i] == pkt->code) {
@@ -1351,7 +1375,8 @@ oc_ri_invoke_client_cb(void *response, oc_client_cb_t *cb,
 #else  /* OC_BLOCK_WISE */
   payload_len = coap_get_payload(response, (const uint8_t **)&payload);
 #endif /* !OC_BLOCK_WISE */
-
+  client_response._payload = payload;
+  client_response._payload_len = (size_t)payload_len;
 #ifndef OC_DYNAMIC_ALLOCATION
   char rep_objects_alloc[OC_MAX_NUM_REP_OBJECTS];
   oc_rep_t rep_objects_pool[OC_MAX_NUM_REP_OBJECTS];
@@ -1378,7 +1403,13 @@ oc_ri_invoke_client_cb(void *response, oc_client_cb_t *cb,
         return true;
       }
     } else {
-      int err = oc_parse_rep(payload, payload_len, &client_response.payload);
+      int err = 0;
+      /* Do not parse an incoming payload when the Content-Format option
+       * has not been set to the CBOR encoding.
+       */
+      if (cf == APPLICATION_CBOR || cf == APPLICATION_VND_OCF_CBOR) {
+        err = oc_parse_rep(payload, payload_len, &client_response.payload);
+      }
       if (err == 0) {
         oc_response_handler_t handler =
           (oc_response_handler_t)cb->handler.response;
@@ -1386,7 +1417,9 @@ oc_ri_invoke_client_cb(void *response, oc_client_cb_t *cb,
       } else {
         OC_WRN("Error parsing payload!");
       }
-      oc_free_rep(client_response.payload);
+      if (client_response.payload) {
+        oc_free_rep(client_response.payload);
+      }
     }
   } else {
     if (pkt->type == COAP_TYPE_ACK && pkt->code == 0) {

@@ -70,7 +70,7 @@ app_init(void)
   oc_activate_interrupt_handler(toggle_switch);
   int err = oc_init_platform("Intel", NULL, NULL);
 
-  err |= oc_add_device("/oic/d", "oic.d.switch", "Temp_sensor", "ocf.2.1.1",
+  err |= oc_add_device("/oic/d", "oic.d.switch", "Temp_sensor", "ocf.2.2.0",
                        "ocf.res.1.3.0,ocf.sh.1.3.0", NULL, NULL);
   PRINT("\tSwitch device added.\n");
 #if defined(OC_IDD_API)
@@ -632,7 +632,7 @@ read_pem(const char *file_path, char *buffer, size_t *buffer_len)
     fclose(fp);
     return -1;
   }
-  if (pem_len > (long)*buffer_len) {
+  if (pem_len >= (long)*buffer_len) {
     PRINT("ERROR: buffer provided too small\n");
     fclose(fp);
     return -1;
@@ -648,6 +648,7 @@ read_pem(const char *file_path, char *buffer, size_t *buffer_len)
     return -1;
   }
   fclose(fp);
+  buffer[pem_len] = '\0';
   *buffer_len = (size_t)pem_len;
   return 0;
 }
@@ -686,7 +687,6 @@ factory_presets_cb(size_t device, void *data)
     PRINT("ERROR: unable to read certificates\n");
     return;
   }
-
   int subca_credid = oc_pki_add_mfg_intermediate_cert(
     0, ee_credid, (const unsigned char *)cert, cert_len);
 
@@ -741,6 +741,13 @@ main(void)
   // max app data size set to 13k large enough to hold full IDD
   oc_set_max_app_data_size(13312);
 
+  /* set the latency to 240 seconds*/
+  /* if no latency is needed then remove the next line */
+  oc_core_set_latency(240);
+  /* set the MTU size to the (minimum IPv6 MTU - size of UDP/IP headers) */
+  /* DTLS handshake messages would be fragmented to fit within this size */
+  /* This enables certificate-based DTLS handshakes over Thread */
+  oc_set_mtu_size(1232);
 #ifdef OC_STORAGE
   oc_storage_config("./smart_home_server_linux_creds");
 #endif /* OC_STORAGE */

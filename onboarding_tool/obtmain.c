@@ -106,6 +106,7 @@ display_menu(void)
   PRINT("[22] Provision identity certificate\n");
   PRINT("[23] Provision role certificate\n");
 #endif /* OC_PKI */
+  PRINT("[24] Set security domain info\n");
   PRINT("-----------------------------------------------\n");
 #ifdef OC_PKI
   PRINT("[96] Install new manufacturer trust anchor\n");
@@ -1446,10 +1447,10 @@ provision_ace2(void)
       PRINT("\nSet wildcard resource? [0-No, 1-Yes]: ");
       SCANF("%d", &c);
       if (c == 1) {
-        PRINT("[1]: All NCRs '*' \n[2]: All NCRs with >=1 secured endpoint "
-              "'+'\n[3]: "
-              "All NCRs with >=1 unsecured endpoint '-'\n\nSelect wildcard "
-              "resource: ");
+        PRINT("[1]: All NCRs '*' \n"
+              "[2]: All NCRs with >=1 secured endpoint '+'\n"
+              "[3]: All NCRs with >=1 unsecured endpoint '-'\n"
+              "\nSelect wildcard resource: ");
         SCANF("%d", &c);
         switch (c) {
         case 1:
@@ -1543,6 +1544,7 @@ read_pem(const char *file_path, char *buffer, size_t *buffer_len)
     return -1;
   }
   fclose(fp);
+  buffer[pem_len] = '\0';
   *buffer_len = (size_t)pem_len;
   return 0;
 }
@@ -1555,10 +1557,12 @@ install_trust_anchor(void)
   char cert[8192];
   size_t cert_len = 0;
   PRINT("\nPaste certificate here, then hit <ENTER> and type \"done\": ");
-
-  while (cert_len < 4 ||
-         (cert_len >= 4 && memcmp(&cert[cert_len - 4], "done", 4) != 0)) {
-    int c = getchar();
+  int c;
+  while ((c = getchar()) == '\n' || c == '\r')
+    ;
+  for (; (cert_len < 4 ||
+          (cert_len >= 4 && memcmp(&cert[cert_len - 4], "done", 4) != 0));
+       c = getchar()) {
     if (c == EOF) {
       PRINT("ERROR processing input.. aborting\n");
       return;
@@ -1567,17 +1571,31 @@ install_trust_anchor(void)
     cert_len++;
   }
 
-  cert_len -= 4;
-  cert[cert_len - 1] = '\0';
+  while (cert[cert_len - 1] != '-' && cert_len > 1) {
+    cert_len--;
+  }
+  cert[cert_len] = '\0';
 
   int rootca_credid =
-    oc_pki_add_mfg_trust_anchor(0, (const unsigned char *)cert, cert_len);
+    oc_pki_add_mfg_trust_anchor(0, (const unsigned char *)cert, strlen(cert));
   if (rootca_credid < 0) {
     PRINT("ERROR installing root cert\n");
     return;
   }
 }
 #endif /* OC_PKI */
+
+static void
+set_sd_info()
+{
+  char name[64] = { 0 };
+  int priv = 0;
+  PRINT("\n\nEnter security domain name: ");
+  SCANF("%63s", name);
+  PRINT("\n\nChoose security domain priv[0-No, 1-Yes]: ");
+  SCANF("%d", &priv);
+  oc_obt_set_sd_info(name, priv);
+}
 
 void
 factory_presets_cb(size_t device, void *data)
@@ -1823,6 +1841,11 @@ main(void)
     case 23:
       provision_role_cert();
       break;
+#endif
+    case 24:
+      set_sd_info();
+      break;
+#ifdef OC_PKI
     case 96:
       install_trust_anchor();
       break;

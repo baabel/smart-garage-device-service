@@ -36,6 +36,10 @@
 #include "oc_core_res.h"
 #include "oc_endpoint.h"
 
+#ifdef OC_SECURITY
+#include "security/oc_sdi.h"
+#endif
+
 static bool
 filter_resource(oc_resource_t *resource, oc_request_t *request,
                 const char *anchor, CborEncoder *links, size_t device_index)
@@ -111,6 +115,8 @@ filter_resource(oc_resource_t *resource, oc_request_t *request,
       oc_rep_set_text_string(eps, ep, oc_string(ep));
       oc_free_string(&ep);
     }
+    if (oc_core_get_latency() > 0)
+      oc_rep_set_uint(eps, lat, oc_core_get_latency());
     oc_rep_object_array_end_item(eps);
   next_eps:
     eps = eps->next;
@@ -228,6 +234,11 @@ process_device_resources(CborEncoder *links, oc_request_t *request,
         oc_string(anchor), links, device_index))
     matches++;
 #endif /* OC_PKI */
+
+  if (filter_resource(oc_core_get_resource_by_index(OCF_SEC_SDI, device_index),
+                      request, oc_string(anchor), links, device_index))
+    matches++;
+
 #endif /* OC_SECURITY */
 
 #if defined(OC_CLIENT) && defined(OC_SERVER) && defined(OC_CLOUD)
@@ -500,7 +511,7 @@ oc_core_1_1_discovery_handler(oc_request_t *request,
   }
 
   int response_length = oc_rep_get_encoded_payload_size();
-
+  request->response->response_buffer->content_format = APPLICATION_CBOR;
   if (matches && response_length) {
     request->response->response_buffer->response_length =
       (uint16_t)response_length;
@@ -675,6 +686,15 @@ oc_core_discovery_handler(oc_request_t *request, oc_interface_mask_t iface_mask,
     memcpy(&root_map, &props_map, sizeof(CborEncoder));
     oc_process_baseline_interface(
       oc_core_get_resource_by_index(OCF_RES, device));
+#ifdef OC_SECURITY
+    oc_sec_sdi_t *s = oc_sec_get_sdi(device);
+    if (!s->priv) {
+      char uuid[37];
+      oc_uuid_to_str(&s->uuid, uuid, OC_UUID_LEN);
+      oc_rep_set_text_string(root, sduuid, uuid);
+      oc_rep_set_text_string(root, sdname, oc_string(s->name));
+    }
+#endif
     oc_rep_set_array(root, links);
     matches += process_device_resources(oc_rep_array(links), request, device);
     oc_rep_close_array(root, links);
@@ -686,6 +706,7 @@ oc_core_discovery_handler(oc_request_t *request, oc_interface_mask_t iface_mask,
     break;
   }
   int response_length = oc_rep_get_encoded_payload_size();
+  request->response->response_buffer->content_format = APPLICATION_VND_OCF_CBOR;
   if (matches && response_length > 0) {
     request->response->response_buffer->response_length =
       (uint16_t)response_length;
@@ -777,33 +798,12 @@ oc_ri_process_discovery_payload(uint8_t *payload, int len,
     rep = rep->next;
   }
 
-  oc_rep_t *link = links->value.object;
-
-  while (link != NULL) {
-    switch (link->type) {
-    case OC_REP_STRING: {
-      if (oc_string_len(link->name) == 6 &&
-          memcmp(oc_string(link->name), "anchor", 6) == 0) {
-        anchor = &link->value.string;
-      }
-    } break;
-    default:
-      break;
-    }
-    if (anchor) {
-      break;
-    }
-    link = link->next;
-  }
-
-  oc_uuid_t di;
-  oc_str_to_uuid(oc_string(*anchor) + 6, &di);
-
   while (links != NULL) {
     /* Reset bm in every round as this can be omitted if 0. */
+    oc_uuid_t di;
     oc_resource_properties_t bm = 0;
     oc_endpoint_t *eps_list = NULL;
-    link = links->value.object;
+    oc_rep_t *link = links->value.object;
 
     while (link != NULL) {
       switch (link->type) {
@@ -811,6 +811,7 @@ oc_ri_process_discovery_payload(uint8_t *payload, int len,
         if (oc_string_len(link->name) == 6 &&
             memcmp(oc_string(link->name), "anchor", 6) == 0) {
           anchor = &link->value.string;
+          oc_str_to_uuid(oc_string(*anchor) + 6, &di);
         } else if (oc_string_len(link->name) == 4 &&
                    memcmp(oc_string(link->name), "href", 4) == 0) {
           uri = &link->value.string;
@@ -844,8 +845,9 @@ oc_ri_process_discovery_payload(uint8_t *payload, int len,
                   memcmp(oc_string(ep->name), "ep", 2) == 0) {
                 if (oc_string_to_endpoint(&ep->value.string, &temp_ep, NULL) ==
                     0) {
-                  if (((endpoint->flags & IPV4) && (temp_ep.flags & IPV6)) ||
-                      ((endpoint->flags & IPV6) && (temp_ep.flags & IPV4))) {
+                  if (!(temp_ep.flags & TCP) &&
+                      (((endpoint->flags & IPV4) && (temp_ep.flags & IPV6)) ||
+                       ((endpoint->flags & IPV6) && (temp_ep.flags & IPV4)))) {
                     goto next_ep;
                   }
                   if (eps_cur) {
@@ -912,6 +914,9 @@ oc_ri_process_discovery_payload(uint8_t *payload, int len,
 
 done:
   oc_free_rep(p);
+#ifdef OC_DNS_CACHE
+  oc_dns_clear_cache();
+#endif /* OC_DNS_CACHE */
   return ret;
 }
 #endif /* OC_CLIENT */

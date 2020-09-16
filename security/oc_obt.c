@@ -36,6 +36,7 @@ check oc_config.h and make sure OC_STORAGE is defined if OC_SECURITY is defined.
 #include "security/oc_pstat.h"
 #include "security/oc_store.h"
 #include "security/oc_tls.h"
+#include "security/oc_sdi.h"
 #include <stdlib.h>
 
 OC_MEMB(oc_discovery_s, oc_discovery_cb_t, 1);
@@ -375,8 +376,10 @@ static oc_event_callback_retval_t
 free_discovery_cb(void *data)
 {
   oc_discovery_cb_t *c = (oc_discovery_cb_t *)data;
-  oc_list_remove(oc_discovery_cbs, c);
-  oc_memb_free(&oc_discovery_s, c);
+  if (is_item_in_list(oc_discovery_cbs, c)) {
+    oc_list_remove(oc_discovery_cbs, c);
+    oc_memb_free(&oc_discovery_s, c);
+  }
   return OC_EVENT_DONE;
 }
 
@@ -1043,6 +1046,8 @@ device1_RFPRO(int status, void *data)
     if (!p->switch_dos) {
       free_credprov_ctx(p, -1);
     }
+  } else {
+    free_credprov_ctx(p, -1);
   }
 }
 
@@ -1537,6 +1542,7 @@ oc_obt_provision_role_wildcard_ace(oc_uuid_t *subject, const char *role,
 
   res = oc_obt_ace_new_resource(ace);
   if (!res) {
+    oc_obt_free_ace(ace);
     goto exit_aceprov_role_wc;
   }
 
@@ -1568,6 +1574,7 @@ oc_obt_provision_auth_wildcard_ace(oc_uuid_t *subject,
 
   res = oc_obt_ace_new_resource(ace);
   if (!res) {
+    oc_obt_free_ace(ace);
     goto exit_aceprov_ac_wc;
   }
 
@@ -2094,19 +2101,22 @@ cred_rsrc(oc_client_response_t *data)
     return;
   }
   oc_list_remove(oc_credret_ctx_l, ctx);
-  oc_sec_creds_t *creds = (oc_sec_creds_t *)oc_memb_alloc(&oc_creds_m);
-  if (creds) {
-    OC_LIST_STRUCT_INIT(creds, creds);
-    if (decode_cred(data->payload, creds)) {
-      OC_DBG("oc_obt:decoded /oic/sec/cred payload");
-    } else {
-      OC_DBG("oc_obt:error decoding /oic/sec/cred payload");
-    }
-    if (oc_list_length(creds->creds) > 0) {
-      ctx->cb(creds, ctx->data);
-    } else {
-      oc_memb_free(&oc_creds_m, creds);
-      creds = NULL;
+  oc_sec_creds_t *creds = NULL;
+  if (data->code < OC_STATUS_BAD_REQUEST) {
+    creds = (oc_sec_creds_t *)oc_memb_alloc(&oc_creds_m);
+    if (creds) {
+      OC_LIST_STRUCT_INIT(creds, creds);
+      if (decode_cred(data->payload, creds)) {
+        OC_DBG("oc_obt:decoded /oic/sec/cred payload");
+      } else {
+        OC_DBG("oc_obt:error decoding /oic/sec/cred payload");
+      }
+      if (oc_list_length(creds->creds) > 0) {
+        ctx->cb(creds, ctx->data);
+      } else {
+        oc_memb_free(&oc_creds_m, creds);
+        creds = NULL;
+      }
     }
   }
   if (!creds) {
@@ -2421,18 +2431,21 @@ acl2_rsrc(oc_client_response_t *data)
     return;
   }
   oc_list_remove(oc_aclret_ctx_l, ctx);
-  oc_sec_acl_t *acl = (oc_sec_acl_t *)oc_memb_alloc(&oc_acl_m);
-  if (acl) {
-    if (decode_acl(data->payload, acl)) {
-      OC_DBG("oc_obt:decoded /oic/sec/acl2 payload");
-    } else {
-      OC_DBG("oc_obt:error decoding /oic/sec/acl2 payload");
-    }
-    if (oc_list_length(acl->subjects) > 0) {
-      ctx->cb(acl, ctx->data);
-    } else {
-      oc_memb_free(&oc_acl_m, acl);
-      acl = NULL;
+  oc_sec_acl_t *acl = NULL;
+  if (data->code < OC_STATUS_BAD_REQUEST) {
+    acl = (oc_sec_acl_t *)oc_memb_alloc(&oc_acl_m);
+    if (acl) {
+      if (decode_acl(data->payload, acl)) {
+        OC_DBG("oc_obt:decoded /oic/sec/acl2 payload");
+      } else {
+        OC_DBG("oc_obt:error decoding /oic/sec/acl2 payload");
+      }
+      if (oc_list_length(acl->subjects) > 0) {
+        ctx->cb(acl, ctx->data);
+      } else {
+        oc_memb_free(&oc_acl_m, acl);
+        acl = NULL;
+      }
     }
   }
   if (!acl) {
@@ -2610,6 +2623,16 @@ oc_obt_delete_own_cred_by_credid(int credid)
   return -1;
 }
 
+void
+oc_obt_set_sd_info(char *name, bool priv)
+{
+  oc_sec_sdi_t *sdi = oc_sec_get_sdi(0);
+  oc_free_string(&sdi->name);
+  oc_new_string(&sdi->name, name, strlen(name));
+  sdi->priv = priv;
+  oc_sec_dump_sdi(0);
+}
+
 /* OBT initialization and shutdown */
 int
 oc_obt_init(void)
@@ -2617,12 +2640,14 @@ oc_obt_init(void)
   OC_DBG("oc_obt:OBT init");
   if (!oc_sec_is_operational(0)) {
     OC_DBG("oc_obt: performing self-onboarding");
+    oc_device_info_t *self = oc_core_get_device_info(0);
     oc_uuid_t *uuid = oc_core_get_device_id(0);
 
     oc_sec_acl_t *acl = oc_sec_get_acl(0);
     oc_sec_doxm_t *doxm = oc_sec_get_doxm(0);
     oc_sec_creds_t *creds = oc_sec_get_creds(0);
     oc_sec_pstat_t *ps = oc_sec_get_pstat(0);
+    oc_sec_sdi_t *sdi = oc_sec_get_sdi(0);
 
     memcpy(acl->rowneruuid.id, uuid->id, 16);
 
@@ -2641,11 +2666,16 @@ oc_obt_init(void)
 
     oc_sec_ace_clear_bootstrap_aces(0);
 
+    oc_gen_uuid(&sdi->uuid);
+    oc_new_string(&sdi->name, oc_string(self->name), oc_string_len(self->name));
+    sdi->priv = false;
+
     oc_sec_dump_pstat(0);
     oc_sec_dump_doxm(0);
     oc_sec_dump_cred(0);
     oc_sec_dump_acl(0);
     oc_sec_dump_ael(0);
+    oc_sec_dump_sdi(0);
 
 #ifdef OC_PKI
     uint8_t public_key[OC_ECDSA_PUBKEY_SIZE];
@@ -2694,10 +2724,10 @@ oc_obt_shutdown(void)
     oc_memb_free(&oc_devices_s, device);
     device = (oc_device_t *)oc_list_pop(oc_devices);
   }
-  oc_discovery_cb_t *cb = (oc_discovery_cb_t *)oc_list_pop(oc_discovery_cbs);
+  oc_discovery_cb_t *cb = (oc_discovery_cb_t *)oc_list_head(oc_discovery_cbs);
   while (cb) {
     free_discovery_cb(cb);
-    cb = (oc_discovery_cb_t *)oc_list_pop(oc_discovery_cbs);
+    cb = (oc_discovery_cb_t *)oc_list_head(oc_discovery_cbs);
   }
 }
 

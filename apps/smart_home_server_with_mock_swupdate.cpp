@@ -85,7 +85,7 @@ app_init(void)
 {
   int err = oc_init_platform("Intel", NULL, NULL);
 
-  err |= oc_add_device("/oic/d", "oic.d.switch", "binary_switch", "ocf.2.1.1",
+  err |= oc_add_device("/oic/d", "oic.d.switch", "binary_switch", "ocf.2.2.0",
                        "ocf.res.1.3.0,ocf.sh.1.3.0", NULL, NULL);
   return err;
 }
@@ -211,7 +211,7 @@ read_pem(const char *file_path, char *buffer, size_t *buffer_len)
     fclose(fp);
     return -1;
   }
-  if (pem_len > (long)*buffer_len) {
+  if (pem_len >= (long)*buffer_len) {
     PRINT("ERROR: buffer provided too small\n");
     fclose(fp);
     return -1;
@@ -227,6 +227,7 @@ read_pem(const char *file_path, char *buffer, size_t *buffer_len)
     return -1;
   }
   fclose(fp);
+  buffer[pem_len] = '\0';
   *buffer_len = (size_t)pem_len;
   return 0;
 }

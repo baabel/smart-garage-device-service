@@ -73,6 +73,15 @@ response_length(void)
 void
 oc_send_response(oc_request_t *request, oc_status_t response_code)
 {
+#ifdef OC_SPEC_VER_OIC
+  if (request->origin && request->origin->version == OIC_VER_1_1_0) {
+    request->response->response_buffer->content_format = APPLICATION_CBOR;
+  } else
+#endif /* OC_SPEC_VER_OIC */
+  {
+    request->response->response_buffer->content_format =
+      APPLICATION_VND_OCF_CBOR;
+  }
   request->response->response_buffer->response_length =
     (uint16_t)response_length();
   request->response->response_buffer->code = oc_status_code(response_code);
@@ -207,6 +216,41 @@ more_or_done:
 }
 
 #ifdef OC_SERVER
+
+bool
+oc_get_request_payload_raw(oc_request_t *request, const uint8_t **payload,
+                           size_t *size, oc_content_format_t *content_format)
+{
+  if (!request || !payload || !size || !content_format) {
+    return false;
+  }
+  if (request->_payload && request->_payload_len > 0) {
+    *content_format = request->content_format;
+    *payload = request->_payload;
+    *size = request->_payload_len;
+    return true;
+  }
+  return false;
+}
+
+void
+oc_send_response_raw(oc_request_t *request, const uint8_t *payload, size_t size,
+                     oc_content_format_t content_format,
+                     oc_status_t response_code)
+{
+  request->response->response_buffer->content_format = content_format;
+  memcpy(request->response->response_buffer->buffer, payload, size);
+  request->response->response_buffer->response_length = (uint16_t)size;
+  request->response->response_buffer->code = oc_status_code(response_code);
+}
+
+void
+oc_send_diagnostic_message(oc_request_t *request, const char *msg,
+                           size_t msg_len, oc_status_t response_code)
+{
+  oc_send_response_raw(request, (const uint8_t *)msg, msg_len, TEXT_PLAIN,
+                       response_code);
+}
 
 static void
 oc_populate_resource_object(oc_resource_t *resource, const char *name,
@@ -367,8 +411,10 @@ oc_resource_set_request_handler(oc_resource_t *resource, oc_method_t method,
     break;
   }
 
-  handler->cb = callback;
-  handler->user_data = user_data;
+  if (handler) {
+    handler->cb = callback;
+    handler->user_data = user_data;
+  }
 }
 
 void
@@ -421,26 +467,21 @@ oc_send_separate_response(oc_separate_response_t *handle,
   response_buffer.buffer = handle->buffer;
   response_buffer.response_length = (uint16_t)response_length();
   response_buffer.code = oc_status_code(response_code);
+  response_buffer.content_format = APPLICATION_VND_OCF_CBOR;
 
   coap_separate_t *cur = oc_list_head(handle->requests), *next = NULL;
   coap_packet_t response[1];
 
   while (cur != NULL) {
     next = cur->next;
-    if (cur->observe > 0) {
+    if (cur->observe < 3) {
       coap_transaction_t *t =
         coap_new_transaction(coap_get_mid(), &cur->endpoint);
       if (t) {
         coap_separate_resume(response, cur,
                              (uint8_t)oc_status_code(response_code), t->mid);
-#ifdef OC_SPEC_VER_OIC
-        if (cur->endpoint.version == OIC_VER_1_1_0) {
-          coap_set_header_content_format(response, APPLICATION_CBOR);
-        } else
-#endif /* OC_SPEC_VER_OIC */
-        {
-          coap_set_header_content_format(response, APPLICATION_VND_OCF_CBOR);
-        }
+        coap_set_header_content_format(response,
+                                       response_buffer.content_format);
 
 #ifdef OC_BLOCK_WISE
         oc_blockwise_state_t *response_state = NULL;
