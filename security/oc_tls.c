@@ -1806,7 +1806,7 @@ read_application_data(oc_tls_peer_t *peer)
               &peer->ssl_ctx, (const unsigned char *)&peer->endpoint.addr,
               sizeof(peer->endpoint.addr)) != 0) {
           oc_tls_free_peer(peer, false);
-          return;
+          return; 
         }
       } else if (ret < 0 && ret != MBEDTLS_ERR_SSL_WANT_READ &&
                  ret != MBEDTLS_ERR_SSL_WANT_WRITE) {

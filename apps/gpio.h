@@ -5,7 +5,10 @@ void process_lower_sensor();
 void process_upper_sensor();
 
 enum garage_door_state_codes { opening, closing, open, closed};
-int initGarageDoor(void (*opening) (void), void (*closing) (void), void (*open) (void), void (*closed) (void) );
+int init_door(void (*opening) (void), void (*closing) (void), void (*open) (void), void (*closed) (void) );
 
-enum garage_door_state_codes getDoorState(int, int);
+void close_door();
+void open_door();
+
+enum garage_door_state_codes get_door_state(int, int);
 

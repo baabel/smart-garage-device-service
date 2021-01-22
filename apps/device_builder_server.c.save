@@ -56,8 +56,7 @@
  version of input_file : 2019-02-15
  title of input_file   : server_lite_4918
 */
-#include <time.h>
-#include <sys/time.h>
+
 #include "oc_api.h"
 #include "port/oc_clock.h"
 #include <signal.h>
@@ -79,6 +78,13 @@ static struct timespec ts;
 #endif /* NO_MAIN */
 #endif
 
+#ifdef WIN32
+/* windows specific code */
+#include <windows.h>
+static CONDITION_VARIABLE cv;   /* event loop variable */
+static CRITICAL_SECTION cs;     /* event loop variable */
+#endif
+
 #define btoa(x) ((x)?"true":"false")
 
 #define MAX_STRING 30           /* max size of the strings. */
@@ -88,12 +94,6 @@ static struct timespec ts;
 
 volatile int quit = 0;          /* stop variable, used by handle_signal */
 
-static const char *cis;
-static const char *auth_code;
-static const char *sid;
-static const char *apn;
-
-void timestamp();
 
 /* global property variables for path: "/doorstate" */
 static char g_doorstate_RESOURCE_PROPERTY_NAME_openAlarm[] = "openAlarm"; /* the name for the attribute */
@@ -129,94 +129,43 @@ static char g_openlevel_RESOURCE_INTERFACE[][MAX_STRING] = {"oic.if.a","oic.if.b
 int g_openlevel_nr_resource_interfaces = 2;
 
 void garage_door_opening_callback() {
-    timestamp();
-    printf(" garage_door_opening_callback\n");
-    g_openlevel_openLevel=2;
-    int result = oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
-    timestamp();
-    printf("\n oc_notify_observers result is %d \n", result);  
+    printf("GARAGE DOOR IS OPENING");
+    g_openlevel_openLevel=25;
+    oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
 }
 
 void garage_door_closing_callback() {
-    timestamp();
-    printf(" garage_door_closing_callback\n");
-    g_openlevel_openLevel = 98;
-    int result = oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
-    timestamp();
-    printf("\n oc_notify_observers result is %d \n", result);
-
+    printf("GARAGE DOOR IS CLOSING");
+    g_openlevel_openLevel=75;
+    oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
 }
 
 void garage_door_open_callback() {
-    timestamp();
-    printf(" garage_door_open_callback\n");
-    g_openlevel_openLevel = 100;
-    int result = oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
-    timestamp();
-    printf("\n oc_notify_observers result is %d \n", result);
+    printf("GARAGE DOOR IS OPEN");
+    g_openlevel_openLevel=100;
+    oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
 }
 
 void garage_door_closed_callback() {
-    timestamp();
-    printf(" garage_door_closed_callback\n");
-    g_openlevel_openLevel = 0;
-    int result = oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
-    timestamp();
-    printf("\n oc_notify_observers result is %d \n", result);
-}
-
-void timestamp()
-{
-    timeval curTime;
-    gettimeofday(&curTime, NULL);
-    int milli = curTime.tv_usec / 1000;
-    char timebuffer [80];
-    char buffer [80];
-    localtime_r(&curTime, timebuffer);
-    strftime(buffer, 80, "%Y-%m-%d %H:%M:%S", timebuffer);
-    char currentTime[84] = "";
-    sprintf(currentTime, "%s.%03d", buffer, milli);
-    printf("%s", currentTime);
+    printf("GARAGE DOOR IS CLOSED");
+    g_openlevel_openLevel=0;
+    oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
 }
 
 static void 
 set_additional_platform_properties(void *data)
 {
-  PRINT("\nset_additional_platform_properties");
   (void)data;
   // Manufactures Details Link
   oc_set_custom_platform_property(mnml, "http://www.mangohome.com/manufacture");
   // Model Number
   oc_set_custom_platform_property(mnmo, "RPiSG-100");
   // Date of Manufacture
-  oc_set_custom_platform_property(mndt, "2020/10/01");
+  oc_set_custom_platform_property(mndt,"2020/10/01");
   //Serial Number
   oc_set_custom_platform_property(mnsel, "1234567890");
-  // Manufacture firware
-  oc_set_custom_platform_property(mnfv, "0.0.1");
-
-  oc_set_custom_platform_property(vid, "Garage door controller");
-
-  oc_set_custom_platform_property(mnnm, "Mango");
-  // manufature hardware version
-  oc_set_custom_platform_property(mnhw, "0.0.1");
-
-  oc_set_custom_platform_property(mnos, "pi");
-
-  oc_set_custom_platform_property(mnsel, "1234567890");
-
-// Manufacturer's Support Information URL
-  oc_set_custom_platform_property(mnsl, "https://www.mangohome.com/support");
 }
 
-static void 
-set_additional_device_properties(void *data)
-{
-  (void)data;
-  // Device purpose
-  oc_set_custom_device_property("purpose", "Garage door controller");
-  
-}
 
 /**
 * function to set up the device.
@@ -225,17 +174,16 @@ set_additional_device_properties(void *data)
 static int
 app_init(void)
 {
-  init_door(&garage_door_opening_callback, &garage_door_closing_callback, &garage_door_open_callback, &garage_door_closed_callback);
-  PRINT("initGarageDoor()\n");
+  initGarageDoor(&garage_door_opening_callback, &garage_door_closing_callback, &garage_door_open_callback, &garage_door_closed_callback);
 
-  int ret = oc_init_platform("mango home", set_additional_platform_properties, NULL);
+  int ret = oc_init_platform("ocf", NULL, NULL);
   /* the settings determine the appearance of the device on the network
      can be OCF1.3.1 or OCF2.0.0 (or even higher)
      supplied values are for OCF1.3.1 */
-  ret |= oc_add_device("/oic/d", "oic.d.garagedoor", "SmartGarage Door", 
+  ret |= oc_add_device("/oic/d", "oic.d.garagedoor", "Smart Garage Door", 
                        "ocf.2.0.5", /* icv value */
                        "ocf.res.1.3.0, ocf.sh.1.3.0",  /* dmv value */
-                       set_additional_device_properties, NULL);
+                       set_additional_platform_properties, NULL);
                        
 #if defined(OC_IDD_API)
   FILE *fp;
@@ -588,6 +536,8 @@ post_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user
         error_state = true;
         PRINT ("   property 'openLevel' is not of type int %d \n", rep->type);
       }
+      
+      
     }
     if (strcmp ( oc_string(rep->name), g_openlevel_RESOURCE_PROPERTY_NAME_range) == 0) {
       /* property "range" of type array exist in payload */
@@ -615,7 +565,7 @@ post_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user
       }
       
       
-    } rep = rep->next;
+    }rep = rep->next;
   }
   /* if the input is ok, then process the input document and assign the global variables */
   if (error_state == false)
@@ -667,19 +617,6 @@ post_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user
     /* TODO: ACTUATOR add here the code to talk to the HW if one implements an actuator.
        one can use the global variables as input to those calls
        the global values have been updated already with the data from the request */
-  
-    if(g_openlevel_openLevel > 50) {
-      PRINT("\nSending open door to actuator");
-      open_door();
-      PRINT("\nFinished open door");
-    } 
-    else
-    {
-      PRINT("\nSending close door to actuator");
-      close_door();
-      PRINT("\nFinished close door");
-    }
-    PRINT("\nsend response");
     oc_send_response(request, OC_STATUS_CHANGED);
   }
   else
@@ -721,19 +658,23 @@ register_resources(void)
   /* periodic observable
      to be used when one wants to send an event per time slice
      period is 1 second */
-  //oc_resource_set_periodic_observable(res_doorstate, 1);
+  oc_resource_set_periodic_observable(res_doorstate, 1);
   /* set observable
      events are send when oc_notify_observers(oc_resource_t *resource) is called.
     this function must be called when the value changes, perferable on an interrupt when something is read from the hardware. */
-  oc_resource_set_observable(res_doorstate, true);
+  /*oc_resource_set_observable(res_doorstate, true); */
    
-  oc_resource_set_request_handler(res_doorstate, OC_GET, get_doorstate, NULL); 
+  oc_resource_set_request_handler(res_doorstate, OC_GET, get_doorstate, NULL);
+#ifdef OC_CLOUD
+//  oc_cloud_add_resource(res_doorstate);
+#endif
+ 
   oc_resource_set_request_handler(res_doorstate, OC_POST, post_doorstate, NULL);
 #ifdef OC_CLOUD
-  PRINT("BEGIN oc_cloud_add_resource(doorstate)\n");
+  PRINT(BEGIN "oc_cloud_add_resource")
   oc_cloud_add_resource(res_doorstate);
 #endif
-  oc_add_resource(res_doorstate);
+oc_add_resource(res_doorstate);
 
   PRINT("Register Resource with local path \"/openlevel\"\n");
   oc_resource_t *res_openlevel = oc_new_resource(NULL, g_openlevel_RESOURCE_ENDPOINT, g_openlevel_nr_resource_types, 0);
@@ -758,15 +699,15 @@ register_resources(void)
   oc_resource_set_observable(res_openlevel, true);
    
   oc_resource_set_request_handler(res_openlevel, OC_GET, get_openlevel, NULL);
-#ifdef OC_CLOUD
-  PRINT("BEGIN oc_cloud_add_resource(openlevel");
+  #ifdef OC_CLOUD
   oc_cloud_add_resource(res_openlevel);
 #endif
+ 
   oc_resource_set_request_handler(res_openlevel, OC_POST, post_openlevel, NULL);
-#ifdef OC_CLOUD
- // oc_cloud_add_resource(res_openlevel);
+  #ifdef OC_CLOUD
+  oc_cloud_add_resource(res_openlevel);
 #endif
-  oc_add_resource(res_openlevel);
+oc_add_resource(res_openlevel);
 }
 
 
@@ -781,56 +722,15 @@ random_pin_cb(const unsigned char *pin, size_t pin_len, void *data)
 }
 #endif /* OC_SECURITY */
 
-static int
-read_pem(const char *file_path, char *buffer, size_t *buffer_len)
-{
-  FILE *fp = fopen(file_path, "r");
-  if (fp == NULL) {
-    PRINT("ERROR: unable to read PEM\n");
-    return -1;
-  }
-  if (fseek(fp, 0, SEEK_END) != 0) {
-    PRINT("ERROR: unable to read PEM\n");
-    fclose(fp);
-    return -1;
-  }
-  long pem_len = ftell(fp);
-  if (pem_len < 0) {
-    PRINT("ERROR: could not obtain length of file\n");
-    fclose(fp);
-    return -1;
-  }
-  if (pem_len > (long)*buffer_len) {
-    PRINT("ERROR: buffer provided too small\n");
-    fclose(fp);
-    return -1;
-  }
-  if (fseek(fp, 0, SEEK_SET) != 0) {
-    PRINT("ERROR: unable to read PEM\n");
-    fclose(fp);
-    return -1;
-  }
-  if (fread(buffer, 1, pem_len, fp) < (size_t)pem_len) {
-    PRINT("ERROR: unable to read PEM\n");
-    fclose(fp);
-    return -1;
-  }
-  fclose(fp);
-  buffer[pem_len] = '\0';
-  *buffer_len = (size_t)pem_len;
-  return 0;
-}
-
 void
 factory_presets_cb(size_t device, void *data)
 {
   (void)device;
   (void)data;
-//#if defined(OC_SECURITY) && defined(OC_PKI)
+#if defined(OC_SECURITY) && defined(OC_PKI)
 /* code to include an pki certificate and root trust anchor */
 #include "oc_pki.h"
 #include "pki_certs.h"
-  PRINT("\nFactory presets callback");
   int credid =
     oc_pki_add_mfg_cert(0, (const unsigned char *)my_cert, strlen(my_cert), (const unsigned char *)my_key, strlen(my_key));
   if (credid < 0) {
@@ -851,31 +751,10 @@ factory_presets_cb(size_t device, void *data)
     PRINT("Successfully installed root certificate\n");
   }
 
-  unsigned char cloud_ca[4096];
-  size_t cert_len = 4096;
-  PRINT("Load cloudca cert from file\n");
-  if (read_pem("pki_certs/cloudca.pem", (char *)cloud_ca, &cert_len) < 0) {
-    PRINT("ERROR: unable to read cloud trust anchor certificates\n");
-    return;
-  }
-
-  PRINT("Add PKI cloudca trust anchor\n");
-  int rootca_credid =
-    oc_pki_add_trust_anchor(0, (const unsigned char *)cloud_ca, cert_len);
-  if (rootca_credid < 0) {
-    PRINT("ERROR installing cloud root cert\n");
-    return;
-  } else {
-	PRINT("Cloud PKI trust anchor added\n");  
-  }
-
   oc_pki_set_security_profile(0, OC_SP_BLACK, OC_SP_BLACK, credid);
-
-  
-
-//#else
-  //  PRINT("No PKI certificates installed\n");
-//#endif /* OC_SECURITY && OC_PKI */
+#else
+    PRINT("No PKI certificates installed\n");
+#endif /* OC_SECURITY && OC_PKI */
 }
 
 
@@ -992,33 +871,10 @@ cloud_status_handler(oc_cloud_context_t *ctx, oc_cloud_status_t status,
 * shuts down the stack
 */
 int
-main(int argc, char *argv[])
+main(void)
 {
 int init;
   oc_clock_time_t next_event;
- 
- if(argc == 0) {
-   PRINT("No arguments");
- }
-
-  if (argc > 1) {
-    auth_code = argv[1];
-    PRINT("auth_code: %s\n", argv[1]);
-  }
-  if (argc > 2) {
-    cis = argv[2];
-    PRINT("cis : %s\n", argv[2]);
-  }
-  if (argc > 3) {
-    sid = argv[3];
-    PRINT("sid: %s\n", argv[3]);
-  }
-  if (argc > 4) {
-    apn = argv[4];
-    PRINT("apn: %s\n", argv[4]);
-  }
-
-
 
 #ifdef WIN32
   /* windows specific */
@@ -1082,10 +938,9 @@ int init;
     - have no display capabilities to display the PIN value
     - server does not require to implement RANDOM PIN (oic.sec.doxm.rdp) onboarding mechanism
   */
-//  oc_set_random_pin_callback(random_pin_cb, NULL);
+  oc_set_random_pin_callback(random_pin_cb, NULL);
 #endif /* OC_SECURITY */
 
- 
   oc_set_factory_presets_cb(factory_presets_cb, NULL);
   
   
@@ -1103,15 +958,26 @@ int init;
   oc_cloud_context_t *ctx = oc_cloud_get_context(0);
   if (ctx) {
     oc_cloud_manager_start(ctx, cloud_status_handler, NULL);
-    if (cis) {
-      PRINT("Provision Cloud Conf Resource\n");
-      oc_cloud_provision_conf_resource(ctx, cis, auth_code, sid, apn);
-    }
   }
 #endif 
 
   PRINT("OCF server \"server_lite_4918\" running, waiting on incoming connections.\n");
 
+#ifdef WIN32
+  /* windows specific loop */
+  while (quit != 1) {
+    next_event = oc_main_poll();
+    if (next_event == 0) {
+      SleepConditionVariableCS(&cv, &cs, INFINITE);
+    } else {
+      oc_clock_time_t now = oc_clock_time();
+      if (now < next_event) {
+        SleepConditionVariableCS(&cv, &cs,
+                                 (DWORD)((next_event-now) * 1000 / OC_CLOCK_SECOND));
+      }
+    }
+  }
+#endif
   
 #ifdef __linux__
   /* linux specific loop */

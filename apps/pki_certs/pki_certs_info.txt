@@ -1,0 +1,56 @@
+Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number:
+            8d:0a:fb:7b:53:b2:50:63
+    Signature Algorithm: ecdsa-with-SHA256
+        Issuer: O=OCF, OU=Kyrio Test Infrastructure, CN=Kyrio TEST Intermediate CA0002
+        Validity
+            Not Before: Jan 11 14:34:43 2021 GMT
+            Not After : Feb 10 14:34:43 2021 GMT
+        Subject: O=OCF, OU=Kyrio Test Infrastructure, CN=pki_certs
+        Subject Public Key Info:
+            Public Key Algorithm: id-ecPublicKey
+                Public-Key: (256 bit)
+                pub: 
+                    04:e8:08:37:4b:40:da:d0:87:74:7e:77:96:2f:60:
+                    58:b6:a4:87:43:16:fa:78:0a:5a:0e:f2:ea:8c:99:
+                    7f:97:49:f9:32:bd:4f:47:ec:77:f1:0d:8b:62:2a:
+                    43:7c:2d:0d:a2:e1:8e:79:80:d4:0c:e9:be:d2:38:
+                    e5:6c:22:14:b5
+                ASN1 OID: prime256v1
+        X509v3 extensions:
+            X509v3 Basic Constraints: 
+                CA:FALSE
+            X509v3 Key Usage: critical
+                Digital Signature, Key Agreement
+            X509v3 Extended Key Usage: 
+                TLS Web Client Authentication, TLS Web Server Authentication, 1.3.6.1.4.1.44924.1.6
+            X509v3 Subject Key Identifier: 
+                1D:C7:7D:C3:33:B2:66:6C:0F:D4:14:DF:60:02:6B:07:63:52:D6:45
+            X509v3 Authority Key Identifier: 
+                keyid:19:73:6A:04:1A:0B:07:70:4F:53:79:53:36:87:FC:0C:BA:7C:AE:0B
+
+            Authority Information Access: 
+                CA Issuers - URI:http://testpki.kyrio.com/ocf/cacerts/BBE64F9A7EE37D29A05E4BB77595F308BE41EB07.crt
+                OCSP - URI:http://testocsp.kyrio.com
+
+            X509v3 CRL Distribution Points: 
+
+                Full Name:
+                  URI:http://testpki.kyrio.com/ocf/crls/BBE64F9A7EE37D29A05E4BB77595F308BE41EB07.crl
+
+            X509v3 Certificate Policies: 
+                Policy: id_ocfCertificatePolicy_v2
+
+            ocfCompliance: 
+                0X0..........06..1.3.6.1.4.1.51414.0.0.1.0..1.3.6.1.4.1.51414.0.0.2.0..piQSmartGarage..piQ
+            ocfSecurityClaims: 
+                0...+......V.....+......V...
+            ocfCPLAttributes: 
+                0 ..1.3.6.1.4.1.71..Discovery..1.0
+    Signature Algorithm: ecdsa-with-SHA256
+         30:44:02:20:62:fc:51:15:c7:0f:d5:e3:ad:06:79:7c:37:0a:
+         66:ef:ce:d5:6a:71:4c:06:38:2a:31:12:67:82:ca:84:3a:6a:
+         02:20:70:ff:be:3c:1f:ef:e7:22:36:b7:3d:52:3c:df:9b:e8:
+         8b:30:6d:bf:06:21:98:b6:95:a4:a7:a6:66:5b:08:66

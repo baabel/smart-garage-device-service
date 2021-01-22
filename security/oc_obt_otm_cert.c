@@ -658,7 +658,7 @@ obt_cert_2(oc_client_response_t *data)
 err_obt_cert_2:
   oc_obt_free_otm_ctx(o, -1, OC_OBT_OTM_CERT);
 }
-
+  
 /*
   OTM sequence:
   1) get doxm
