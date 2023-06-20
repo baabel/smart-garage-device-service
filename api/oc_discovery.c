@@ -248,6 +248,26 @@ process_device_resources(CborEncoder *links, oc_request_t *request,
     matches++;
 #endif /* OC_CLIENT && OC_SERVER && OC_CLOUD */
 
+#if defined(OC_SERVER) && defined(OC_WIFI_EASYSETUP)
+  if (filter_resource(oc_core_get_resource_by_index(OCF_WES_WIFI, device_index),
+                      request, oc_string(anchor), links, device_index))
+    matches++;
+  if (filter_resource(
+        oc_core_get_resource_by_index(OCF_WES_DEVICE, device_index), request,
+        oc_string(anchor), links, device_index))
+    matches++;
+#endif /* OC_SERVER && OC_WIFI_EASYSETUP */
+
+#if defined(OC_SERVER) && defined(OC_ESIM_EASYSETUP)
+  if (filter_resource(oc_core_get_resource_by_index(OCF_EES_RSP, device_index),
+                      request, oc_string(anchor), links, device_index))
+    matches++;
+  if (filter_resource(
+        oc_core_get_resource_by_index(OCF_EES_RSPCAP, device_index), request,
+        oc_string(anchor), links, device_index))
+    matches++;
+#endif /* OC_SERVER && OC_WIFI_EASYSETUP */
+
 #ifdef OC_SERVER
   oc_resource_t *resource = oc_ri_get_app_resources();
   for (; resource; resource = resource->next) {
@@ -513,8 +533,7 @@ oc_core_1_1_discovery_handler(oc_request_t *request,
   int response_length = oc_rep_get_encoded_payload_size();
   request->response->response_buffer->content_format = APPLICATION_CBOR;
   if (matches && response_length) {
-    request->response->response_buffer->response_length =
-      (uint16_t)response_length;
+    request->response->response_buffer->response_length = response_length;
     request->response->response_buffer->code = oc_status_code(OC_STATUS_OK);
   } else if (request->origin && (request->origin->flags & MULTICAST) == 0) {
     request->response->response_buffer->code =
@@ -708,8 +727,7 @@ oc_core_discovery_handler(oc_request_t *request, oc_interface_mask_t iface_mask,
   int response_length = oc_rep_get_encoded_payload_size();
   request->response->response_buffer->content_format = APPLICATION_VND_OCF_CBOR;
   if (matches && response_length > 0) {
-    request->response->response_buffer->response_length =
-      (uint16_t)response_length;
+    request->response->response_buffer->response_length = response_length;
     request->response->response_buffer->code = oc_status_code(OC_STATUS_OK);
   } else if (request->origin && (request->origin->flags & MULTICAST) == 0) {
     request->response->response_buffer->code =

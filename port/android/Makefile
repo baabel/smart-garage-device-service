@@ -60,7 +60,7 @@
 
 # Location of the installation directory and the API level.
 export OS=android
-export ANDROID_API := 23
+export ANDROID_API := 29
 ifeq (${NDK_HOME},)
 export ANDROID_BASE := "${HOME}/android-arm-${ANDROID_API}"
 else
@@ -81,9 +81,9 @@ endif
 
 export ANDROID_HOST ?= arm-linux-androideabi-
 
-BIN_BASE := ${ANDROID_BASE}/bin/${ANDROID_HOST}
+BIN_BASE := ${ANDROID_BASE}/${ANDROID_HOST}/bin
 ifeq ($(origin CC),default)
-export CC := ${BIN_BASE}gcc
+export CC := gcc
 endif
 ifeq ($(origin AR),default)
 AR := ${BIN_BASE}ar

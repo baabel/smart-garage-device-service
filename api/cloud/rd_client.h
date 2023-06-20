@@ -1,4 +1,4 @@
-/****************************************************************************
+  /****************************************************************************
  *
  * Copyright 2019 Jozef Kralik All Rights Reserved.
  * Copyright 2018 Samsung Electronics All Rights Reserved.
@@ -27,6 +27,7 @@
 
 #include "oc_client_state.h"
 #include "oc_ri.h"
+#include "oc_collection.h"
 
 #ifdef __cplusplus
 extern "C" {

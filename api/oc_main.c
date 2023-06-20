@@ -262,6 +262,7 @@ oc_main_init(const oc_handler_t *handler)
   initialized = true;
 
 #ifdef OC_CLIENT
+  OC_DBG("OC_CLIENT is defined");
   if (app_callbacks->requests_entry)
     app_callbacks->requests_entry();
 #endif

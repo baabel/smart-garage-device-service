@@ -54,6 +54,7 @@
 #include "oc_svr.h"
 #include "oc_tls.h"
 #include "oc_audit.h"
+#include <signal.h>
 
 OC_PROCESS(oc_tls_handler, "TLS Process");
 OC_MEMB(tls_peers_s, oc_tls_peer_t, OC_MAX_TLS_PEERS);
@@ -1418,9 +1419,9 @@ oc_tls_init_context(void)
 #endif /* _WIN32 or _WIN64 */
   mbedtls_debug_set_threshold(4);
 #endif /* OC_DEBUG */
-
   mbedtls_entropy_init(&entropy_ctx);
   mbedtls_ssl_cookie_init(&cookie_ctx);
+  
   mbedtls_ctr_drbg_init(&ctr_drbg_ctx);
   if (mbedtls_ctr_drbg_seed(&ctr_drbg_ctx, mbedtls_entropy_func, &entropy_ctx,
                             (const unsigned char *)PERSONALIZATION_DATA,

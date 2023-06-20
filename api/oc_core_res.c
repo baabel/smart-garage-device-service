@@ -24,6 +24,10 @@
 #include "oc_discovery.h"
 #include "oc_introspection_internal.h"
 #include "oc_rep.h"
+#include "oc_collection.h"
+#if defined(OC_WIFI_EASYSETUP) || defined(OC_ESIM_EASYSETUP)
+#include "oc_easysetup_enrollee.h"
+#endif
 
 #ifdef OC_SECURITY
 #include "security/oc_doxm.h"
@@ -37,10 +41,11 @@
 #ifdef OC_DYNAMIC_ALLOCATION
 #include "oc_endpoint.h"
 #include <stdlib.h>
-static oc_resource_t *core_resources = NULL;
+static oc_resource_t **core_resources = NULL;
 static oc_device_info_t *oc_device_info = NULL;
 #else  /* OC_DYNAMIC_ALLOCATION */
-static oc_resource_t core_resources[1 + OCF_D * OC_MAX_NUM_DEVICES];
+static oc_resource_t *core_resources[1 + OCF_D * OC_MAX_NUM_DEVICES];
+static oc_resource_t _core_resources[1 + OCF_D * OC_MAX_NUM_DEVICES];
 static oc_device_info_t oc_device_info[OC_MAX_NUM_DEVICES];
 #endif /* !OC_DYNAMIC_ALLOCATION */
 static oc_platform_info_t oc_platform_info;
@@ -49,10 +54,6 @@ static bool announce_con_res = false;
 static int res_latency = 0;
 static size_t device_count = 0;
 
-/* Although used several times in the OCF spec, "/oic/con" is not
-   accepted by the spec. Use a private prefix instead.
-   Update OC_NAMELEN_CON_RES if changing the value.
-   String must not have a leading slash. */
 #define OC_NAME_CON_RES "oc/con"
 /* Number of characters of OC_NAME_CON_RES */
 #define OC_NAMELEN_CON_RES 6
@@ -63,13 +64,18 @@ oc_core_init(void)
   oc_core_shutdown();
 
 #ifdef OC_DYNAMIC_ALLOCATION
-  core_resources = (oc_resource_t *)calloc(1, sizeof(oc_resource_t));
+  core_resources = NULL;
+  core_resources = (oc_resource_t **)calloc(1, sizeof(oc_resource_t *));
   if (!core_resources) {
     oc_abort("Insufficient memory");
   }
-
   oc_device_info = NULL;
-#endif /* OC_DYNAMIC_ALLOCATION */
+#else  /* OC_DYNAMIC_ALLOCATION */
+  size_t i;
+  for (i = 0; i < 1 + OCF_D * OC_MAX_NUM_DEVICES; i++) {
+    core_resources[i] = &_core_resources[i];
+  }
+#endif /* !OC_DYNAMIC_ALLOCATION */
 }
 
 static void
@@ -77,21 +83,19 @@ oc_core_free_device_info_properties(oc_device_info_t *oc_device_info_item)
 {
 
   if (oc_device_info_item) {
-    if (oc_string_len(oc_device_info_item->name))
-      oc_free_string(&(oc_device_info_item->name));
-    if (oc_string_len(oc_device_info_item->icv))
-      oc_free_string(&(oc_device_info_item->icv));
-    if (oc_string_len(oc_device_info_item->dmv))
-      oc_free_string(&(oc_device_info_item->dmv));
+    oc_free_string(&(oc_device_info_item->name));
+    oc_free_string(&(oc_device_info_item->icv));
+    oc_free_string(&(oc_device_info_item->dmv));
   }
 }
 
 void
 oc_core_shutdown(void)
 {
-  size_t i;
-  if (oc_string_len(oc_platform_info.mfg_name))
+  size_t i, j = 0;
+  if (oc_string_len(oc_platform_info.mfg_name)) {
     oc_free_string(&(oc_platform_info.mfg_name));
+  }
 
 #ifdef OC_DYNAMIC_ALLOCATION
   if (oc_device_info) {
@@ -110,8 +114,29 @@ oc_core_shutdown(void)
   if (core_resources) {
 #endif /* OC_DYNAMIC_ALLOCATION */
     for (i = 0; i < 1 + (OCF_D * device_count); ++i) {
-      oc_resource_t *core_resource = &core_resources[i];
-      oc_ri_free_resource_properties(core_resource);
+#if defined(OC_COLLECTIONS) && defined(OC_SERVER)
+#if defined(OC_WIFI_EASYSETUP)
+      if (j == OCF_WES) {
+        // Skip
+      } else
+#endif /* OC_WIFI_EASYSETUP */
+#if defined(OC_ESIM_EASYSETUP)
+        if (j == OCF_EES) {
+        // Skip.
+      } else
+#endif /* OC_ESIM_EASYSETUP */
+#endif /* OC_COLLECTIONS && OC_SERVER */
+      {
+        oc_resource_t *core_resource = core_resources[i];
+        oc_ri_free_resource_properties(core_resource);
+#ifdef OC_DYNAMIC_ALLOCATION
+        free(core_resource);
+#endif /* OC_DYNAMIC_ALLOCATION */
+      }
+      j++;
+      if (j > OCF_D) {
+        j = 1;
+      }
     }
 #ifdef OC_DYNAMIC_ALLOCATION
     free(core_resources);
@@ -239,10 +264,6 @@ oc_core_con_handler_post(oc_request_t *request, oc_interface_mask_t iface_mask,
       oc_rep_start_root_object();
       oc_rep_set_text_string(root, n, oc_string(oc_device_info[device].name));
       oc_rep_end_root_object();
-      /* notify_observers is automatically triggered in
-         oc_ri_invoke_coap_entity_handler() for oic.wk.con,
-         we cannot notify name change of oic.wk.d, as this
-         is not observable */
       changed = true;
       break;
     }
@@ -303,15 +324,29 @@ oc_core_add_new_device(const char *uri, const char *rt, const char *name,
     return NULL;
   }
 #else /* !OC_DYNAMIC_ALLOCATION */
-  size_t new_num = 1 + OCF_D * (device_count + 1);
-  core_resources =
-    (oc_resource_t *)realloc(core_resources, new_num * sizeof(oc_resource_t));
 
+  size_t new_num = 1 + OCF_D * (device_count + 1);
+  core_resources = (oc_resource_t **)realloc(core_resources,
+                                             new_num * sizeof(oc_resource_t *));
   if (!core_resources) {
     oc_abort("Insufficient memory");
   }
-  oc_resource_t *device = &core_resources[new_num - OCF_D];
-  memset(device, 0, OCF_D * sizeof(oc_resource_t));
+  size_t i, base = new_num - OCF_D;
+  for (i = base; i < new_num; i++) {
+#if defined(OC_WIFI_EASYSETUP) && defined(OC_COLLECTIONS) && defined(OC_SERVER)
+    if (i == (base + OCF_WES - 1)) {
+      // Skip.
+    } else
+#endif /* OC_WIFI_EASYSETUP && OC_COLLECTIONS && OC_SERVER */
+#if defined(OC_ESIM_EASYSETUP) && defined(OC_COLLECTIONS) && defined(OC_SERVER)
+      if (i == (base + OCF_EES - 1)) {
+      // Skip.
+    } else
+#endif /* OC_ESIM_EASYSETUP && OC_COLLECTIONS && OC_SERVER */
+    {
+      core_resources[i] = (oc_resource_t *)calloc(1, sizeof(oc_resource_t));
+    }
+  }
 
   oc_device_info = (oc_device_info_t *)realloc(
     oc_device_info, (device_count + 1) * sizeof(oc_device_info_t));
@@ -363,6 +398,12 @@ oc_core_add_new_device(const char *uri, const char *rt, const char *name,
 #if defined(OC_CLIENT) && defined(OC_SERVER) && defined(OC_CLOUD)
   oc_create_cloudconf_resource(device_count);
 #endif /* OC_CLIENT && OC_SERVER && OC_CLOUD */
+#if defined(OC_WIFI_EASYSETUP) && defined(OC_COLLECTIONS) && defined(OC_SERVER)
+  oc_create_wifi_easysetup_resource(device_count, data);
+#endif /* OC_WIFI_EASYSETUP && OC_COLLECTIONS && OC_SERVER */
+#if defined(OC_ESIM_EASYSETUP) && defined(OC_COLLECTIONS) && defined(OC_SERVER)
+  oc_create_esim_easysetup_resource(device_count, data);
+#endif /* OC_ESIM_EASYSETUP && OC_COLLECTIONS && OC_SERVER */
 
   oc_device_info[device_count].data = data;
 
@@ -371,7 +412,6 @@ oc_core_add_new_device(const char *uri, const char *rt, const char *name,
   }
 
   device_count++;
-
   return &oc_device_info[device_count - 1];
 }
 
@@ -443,6 +483,12 @@ oc_core_init_platform(const char *mfg_name, oc_core_init_platform_cb_t init_cb,
     return &oc_platform_info;
   }
 
+#ifdef OC_DYNAMIC_ALLOCATION
+  if (core_resources[0] == NULL) {
+    core_resources[0] = (oc_resource_t *)calloc(1, sizeof(oc_resource_t));
+  }
+#endif /* OC_DYNAMIC_ALLOCATION */
+
   /* Populating resource obuject */
   oc_core_populate_resource(OCF_P, 0, "oic/p", OC_IF_R | OC_IF_BASELINE,
                             OC_IF_R, OC_DISCOVERABLE, oc_core_platform_handler,
@@ -470,6 +516,28 @@ oc_store_uri(const char *s_uri, oc_string_t *d_uri)
     oc_new_string(d_uri, s_uri, strlen(s_uri));
   }
 }
+
+#if defined(OC_SERVER) && defined(OC_COLLECTIONS)
+void
+oc_core_populate_collection(int core_resource, size_t device_index,
+                            const char *uri, int properties,
+                            int num_resource_types, ...)
+{
+  oc_resource_t **r = &core_resources[OCF_D * device_index + core_resource];
+  *r = oc_new_collection(NULL, uri, num_resource_types, device_index);
+  if (*r) {
+    va_list rt_list;
+    int i;
+    va_start(rt_list, num_resource_types);
+    for (i = 0; i < num_resource_types; i++) {
+      oc_resource_bind_resource_type(*r, va_arg(rt_list, const char *));
+    }
+    va_end(rt_list);
+    (*r)->properties = properties;
+    oc_add_collection(*r);
+  }
+}
+#endif /* OC_SERVER && OC_COLLECTIONS */
 
 void
 oc_core_populate_resource(int core_resource, size_t device_index,
@@ -531,15 +599,15 @@ oc_resource_t *
 oc_core_get_resource_by_index(int type, size_t device)
 {
   if (type == OCF_P) {
-    return &core_resources[0];
+    return core_resources[0];
   }
-  return &core_resources[OCF_D * device + type];
+  return core_resources[OCF_D * device + type];
 }
 
 bool
 oc_core_is_DCR(oc_resource_t *resource, size_t device)
 {
-  if (resource == &core_resources[0]) {
+  if (resource == core_resources[0]) {
     return true;
   }
 
@@ -547,7 +615,7 @@ oc_core_is_DCR(oc_resource_t *resource, size_t device)
 
   size_t DCRs_end = device_resources + OCF_D, i;
   for (i = device_resources + 1; i <= DCRs_end; i++) {
-    if (resource == &core_resources[i]) {
+    if (resource == core_resources[i]) {
       if (i == (device_resources + OCF_INTROSPECTION_WK) ||
           i == (device_resources + OCF_INTROSPECTION_DATA) ||
           i == (device_resources + OCF_CON)) {
@@ -568,7 +636,7 @@ oc_core_get_resource_by_uri(const char *uri, size_t device)
     skip = 1;
   if ((strlen(uri) - skip) == 5) {
     if (memcmp(uri + skip, "oic/p", 5) == 0) {
-      return &core_resources[0];
+      return core_resources[0];
     } else if (memcmp(uri + skip, "oic/d", 5) == 0) {
       type = OCF_D;
     }
@@ -597,6 +665,30 @@ oc_core_get_resource_by_uri(const char *uri, size_t device)
     type = OCF_COAPCLOUDCONF;
   }
 #endif /* OC_CLOUD */
+#ifdef OC_WIFI_EASYSETUP
+  else if ((strlen(uri) - skip) == 9 &&
+           memcmp(uri + skip, "easysetup", 9) == 0) {
+    type = OCF_WES;
+  } else if ((strlen(uri) - skip) == 8 &&
+           memcmp(uri + skip, "wificonf", 8) == 0) {
+    type = OCF_WES_WIFI;
+  } else if ((strlen(uri) - skip) == 7 &&
+           memcmp(uri + skip, "devconf", 7) == 0) {
+    type = OCF_WES_DEVICE;
+  }
+#endif /* OC_WIFI_EASYSETUP */
+#ifdef OC_ESIM_EASYSETUP
+  else if ((strlen(uri) - skip) == 13 &&
+           memcmp(uri + skip, "esimeasysetup", 13) == 0) {
+    type = OCF_EES;
+  } else if ((strlen(uri) - skip) == 7 &&
+           memcmp(uri + skip, "rspconf", 7) == 0) {
+    type = OCF_EES_RSP;
+  } else if ((strlen(uri) - skip) == 13 &&
+           memcmp(uri + skip, "rspcapability", 13) == 0) {
+    type = OCF_EES_RSPCAP;
+  }
+#endif /* OC_ESIM_EASYSETUP */
 #ifdef OC_SECURITY
   else if ((strlen(uri) - skip) == 12) {
     if (memcmp(uri + skip, "oic/sec/doxm", 12) == 0) {
@@ -637,7 +729,7 @@ oc_core_get_resource_by_uri(const char *uri, size_t device)
     return NULL;
   }
   size_t res = OCF_D * device + type;
-  return &core_resources[res];
+  return core_resources[res];
 }
 
 bool

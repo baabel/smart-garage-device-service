@@ -7,7 +7,7 @@
 #IDD=0 
 
 # use for building with cloud access
-#CLOUD=1
+CLOUD=1
 
 # include standard make file
 include Makefile
@@ -15,15 +15,17 @@ include Makefile
 # typical addition of CFLAGS
 #
 #CFLAGS += `pkg-config --cflags python`
-
+CFLAGS += -DOC_CLIENT
+#CFLAGS += -DOC_COLLECTIONS
+CFLAGS += -DOC_COLLECTIONS_IF_CREATE
+CFLAGS += -DOC_SERVER
 # typical addition of LIBS
 #
 #LIBS += `-lmylib`
-
 
 #
 # additional target for device_builder_server executable.
 #
 device_builder_server: libiotivity-lite-client-server.a ../../apps/device_builder_server.c
 	@mkdir -p $@_creds
-	${CC} -o $@ ../../apps/device_builder_server.c libiotivity-lite-client-server.a -DOC_CLIENT -DOC_SERVER ${CFLAGS}  ${LIBS} -lwiringPi
+	${CC} -o $@ ../../apps/device_builder_server.c libiotivity-lite-client-server.a  ${CFLAGS}  ${LIBS} -lwiringPi

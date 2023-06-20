@@ -33,15 +33,15 @@ typedef struct oc_link_params_t
   oc_string_t value;
 } oc_link_params_t;
 
-struct oc_link_s
+typedef struct oc_link_t
 {
-  struct oc_link_s *next;
+  struct oc_link_t *next;
   oc_resource_t *resource;
   oc_interface_mask_t interfaces;
   int64_t ins;
   oc_string_array_t rel;
   OC_LIST_STRUCT(params);
-};
+} oc_link_t;
 
 typedef struct oc_rt_t
 {
@@ -49,9 +49,9 @@ typedef struct oc_rt_t
   oc_string_t rt;
 } oc_rt_t;
 
-struct oc_collection_s
+typedef struct oc_collection_t
 {
-  struct oc_collection_s *next;
+  struct oc_collection_t *next;
   size_t device;
   oc_string_t name;
   oc_string_t uri;
@@ -73,7 +73,7 @@ struct oc_collection_s
   OC_LIST_STRUCT(mandatory_rts);
   OC_LIST_STRUCT(supported_rts);
   OC_LIST_STRUCT(links);
-};
+} oc_collection_t;
 
 void oc_link_set_interfaces(oc_link_t *link,
                             oc_interface_mask_t new_interfaces);

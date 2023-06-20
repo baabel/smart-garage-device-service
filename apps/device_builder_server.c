@@ -1,6 +1,6 @@
 /*
 -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
- Copyright 2017-2019 Open Connectivity Foundation
+ Copyright 2021-2022 Mango Home
 -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -50,18 +50,18 @@
 *       updates the global variables
 *
 */
-/*
- tool_version          : 20200103
- input_file            : ../device_output/out_codegeneration_merged.swagger.json
- version of input_file : 2019-02-15
- title of input_file   : server_lite_4918
-*/
+
 #include <time.h>
 #include <sys/time.h>
 #include "oc_api.h"
+#include "oc_core_res.h"
+#include "oc_swupdate.h"
 #include "port/oc_clock.h"
 #include <signal.h>
 #include "../api/gpio/gpio.h"
+#include "oc_easysetup_enrollee.h"
+#include "wifi.h"
+
 #ifdef OC_CLOUD
 #include "oc_cloud.h"
 #endif
@@ -79,6 +79,13 @@ static struct timespec ts;
 #endif /* NO_MAIN */
 #endif
 
+
+#ifdef OC_SOFTWARE_UPDATE
+
+#endif /* OC_SOFTWARE_UPDATE */
+
+
+
 #define btoa(x) ((x)?"true":"false")
 
 #define MAX_STRING 30           /* max size of the strings. */
@@ -93,7 +100,20 @@ static const char *auth_code;
 static const char *sid;
 static const char *apn;
 
-void timestamp();
+static void LOG(const char * message);
+static void timestamp();
+
+
+#define SOFT_AP_SSID "Mango-Home-Innovation"
+#define SOFT_AP_PSK "111222333"
+
+// There are indicative values and might vary with application requirement
+#define MAX_APP_DATA_SIZE 8192
+#define MAX_MTU_SIZE 2048
+
+static int g_device_count = 0;
+
+
 
 /* global property variables for path: "/doorstate" */
 static char g_doorstate_RESOURCE_PROPERTY_NAME_openAlarm[] = "openAlarm"; /* the name for the attribute */
@@ -128,61 +148,134 @@ int g_openlevel_nr_resource_types = 1;
 static char g_openlevel_RESOURCE_INTERFACE[][MAX_STRING] = {"oic.if.a","oic.if.baseline"}; /* interface if (as an array) */
 int g_openlevel_nr_resource_interfaces = 2;
 
+int validate_purl(const char *purl);
+int download_update(size_t device, const char *url);
+int check_new_version(size_t device, const char *url, const char *version);
+int perform_upgrade(size_t device, const char *url);
+
+
+// Device 1 Callbaks
+static void
+wes_prov_cb1(oc_wes_data_t *wes_prov_data, void *user_data)
+{
+  (void)user_data;
+  PRINT("wes_prov_cb1\n");
+  if (wes_prov_data == NULL) {
+      PRINT("wes_prov_data is NULL\n");
+      return;
+  }
+}
+
+static void
+device_prov_cb1(oc_wes_device_data_t *device_prov_data, void *user_data)
+{
+  (void)user_data;
+  PRINT("device_prov_cb1\n");
+  if (device_prov_data == NULL) {
+      PRINT("device_prov_data is NULL\n");
+      return;
+  }
+  PRINT("Device Name: %s\n", oc_string(device_prov_data->dev_name));
+}
+
+static void
+wifi_prov_cb1(oc_wes_wifi_data_t *wifi_prov_data, void *user_data)
+{
+  (void)user_data;
+  PRINT("wifi_prov_cb1 triggered\n");
+  if (wifi_prov_data == NULL) {
+      PRINT("wes_prov_data is NULL\n");
+      return;
+  }
+  PRINT("SSID : %s\n", oc_string(wifi_prov_data->ssid));
+  PRINT("Password : %s\n", oc_string(wifi_prov_data->cred));
+  PRINT("AuthType : %d\n", wifi_prov_data->auth_type);
+  PRINT("EncType : %d\n", wifi_prov_data->enc_type);
+
+  //1  Stop DHCP Server
+  wifi_stop_dhcp_server();
+  //1 Start WiFi Station
+  wifi_start_station();
+  //1 Join WiFi AP with ssid, authtype and pwd
+  wifi_join(NULL, NULL);
+  //1 Start DHCP client
+  wifi_start_dhcp_client();
+}
+
+// resource proisining callbacks for 1 device
+wes_device_callbacks_s g_rsc_cbks[] = {
+  {
+    .oc_wes_prov_cb_t = &wes_prov_cb1,
+    .oc_wes_wifi_prov_cb_t = &wifi_prov_cb1,
+    .oc_wes_dev_prov_cb_t = &device_prov_cb1,
+  }
+};
+
+
 void garage_door_opening_callback() {
-    timestamp();
-    printf(" garage_door_opening_callback\n");
+    LOG(" garage_door_opening_callback\n");
     g_openlevel_openLevel=2;
     int result = oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
-    timestamp();
-    printf("\n oc_notify_observers result is %d \n", result);  
+    char buffer[80];
+    sprintf(buffer, "\n oc_notify_observers result is %d \n", result);    
+    LOG(buffer);  
 }
 
 void garage_door_closing_callback() {
-    timestamp();
-    printf(" garage_door_closing_callback\n");
+    LOG(" garage_door_closing_callback\n");
     g_openlevel_openLevel = 98;
     int result = oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
-    timestamp();
-    printf("\n oc_notify_observers result is %d \n", result);
-
+    char buffer[80];
+    sprintf(buffer, "\n oc_notify_observers result is %d \n", result);  
+    LOG(buffer);
 }
 
 void garage_door_open_callback() {
-    timestamp();
-    printf(" garage_door_open_callback\n");
+    LOG(" garage_door_open_callback\n");
     g_openlevel_openLevel = 100;
     int result = oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
-    timestamp();
-    printf("\n oc_notify_observers result is %d \n", result);
+    char buffer[80];
+    sprintf(buffer, "\n oc_notify_observers result is %d \n", result);  
+    LOG(buffer);
 }
 
 void garage_door_closed_callback() {
-    timestamp();
-    printf(" garage_door_closed_callback\n");
+    LOG(" garage_door_closed_callback\n");
     g_openlevel_openLevel = 0;
     int result = oc_notify_observers(oc_ri_get_app_resource_by_uri(g_openlevel_RESOURCE_ENDPOINT, strlen(g_openlevel_RESOURCE_ENDPOINT), 0));
-    timestamp();
-    printf("\n oc_notify_observers result is %d \n", result);
+    char buffer[80];
+    sprintf(buffer, "\n oc_notify_observers result is %d \n", result);  
+    LOG(buffer);
 }
 
-void timestamp()
+static void timestamp(char * output)
 {
-    timeval curTime;
-    gettimeofday(&curTime, NULL);
-    int milli = curTime.tv_usec / 1000;
-    char timebuffer [80];
-    char buffer [80];
-    localtime_r(&curTime, timebuffer);
-    strftime(buffer, 80, "%Y-%m-%d %H:%M:%S", timebuffer);
-    char currentTime[84] = "";
-    sprintf(currentTime, "%s.%03d", buffer, milli);
-    printf("%s", currentTime);
+  struct timeval curTime;
+  gettimeofday(&curTime, NULL);
+  int milli = curTime.tv_usec / 1000;
+
+  time_t rawtime;
+  struct tm * timeinfo;
+  char buffer [80];
+
+  time(&rawtime);
+  timeinfo = localtime(&rawtime);
+
+  strftime(buffer, 80, "%Y-%m-%d %H:%M:%S", timeinfo);
+  sprintf(output, "%s:%d", buffer, milli);
+}
+
+static void LOG(const char * message) {
+  printf("About to log %s", message);
+  char timedata[84] = "";
+  timestamp(timedata);
+  printf("%s %s", timedata, message);
 }
 
 static void 
 set_additional_platform_properties(void *data)
 {
-  PRINT("\nset_additional_platform_properties");
+  LOG("\nset_additional_platform_properties");
   (void)data;
   // Manufactures Details Link
   oc_set_custom_platform_property(mnml, "http://www.mangohome.com/manufacture");
@@ -226,7 +319,7 @@ static int
 app_init(void)
 {
   init_door(&garage_door_opening_callback, &garage_door_closing_callback, &garage_door_open_callback, &garage_door_closed_callback);
-  PRINT("initGarageDoor()\n");
+  LOG("initGarageDoor()\n");
 
   int ret = oc_init_platform("mango home", set_additional_platform_properties, NULL);
   /* the settings determine the appearance of the device on the network
@@ -265,8 +358,11 @@ app_init(void)
     PRINT("%s", introspection_error);
   }
 #else
-    PRINT("\t introspection via header file\n");
+    LOG("\t introspection via header file\n");
 #endif
+
+ g_device_count = oc_core_get_num_devices();
+ PRINT("Numer of registered  Devices %d\n", g_device_count);
   return ret;
 }
 
@@ -299,19 +395,19 @@ check_on_readonly_common_resource_properties(oc_string_t name, bool error_state)
 {
   if (strcmp ( oc_string(name), "n") == 0) {
     error_state = true;
-    PRINT ("   property \"n\" is ReadOnly \n");
+    LOG ("   property \"n\" is ReadOnly \n");
   }else if (strcmp ( oc_string(name), "if") == 0) {
     error_state = true;
-    PRINT ("   property \"if\" is ReadOnly \n");
+    LOG ("   property \"if\" is ReadOnly \n");
   } else if (strcmp ( oc_string(name), "rt") == 0) {
     error_state = true;
-    PRINT ("   property \"rt\" is ReadOnly \n");
+    LOG ("   property \"rt\" is ReadOnly \n");
   } else if (strcmp ( oc_string(name), "id") == 0) {
     error_state = true;
-    PRINT ("   property \"id\" is ReadOnly \n");
+    LOG ("   property \"id\" is ReadOnly \n");
   } else if (strcmp ( oc_string(name), "id") == 0) {
     error_state = true;
-    PRINT ("   property \"id\" is ReadOnly \n");
+    LOG ("   property \"id\" is ReadOnly \n");
   } 
   return error_state;
 }
@@ -349,13 +445,13 @@ get_doorstate(oc_request_t *request, oc_interface_mask_t interfaces, void *user_
   bool error_state = false;
   
   
-  PRINT("-- Begin get_doorstate: interface %d\n", interfaces);
+  LOG("-- Begin get_doorstate: interface %d\n");
   oc_rep_start_root_object();
   switch (interfaces) {
   case OC_IF_BASELINE:
     /* fall through */
   case OC_IF_A:
-  PRINT("   Adding Baseline info\n" );
+  LOG("   Adding Baseline info\n" );
     oc_process_baseline_interface(request->resource);
     
     /* property (boolean) 'openAlarm' */
@@ -411,7 +507,7 @@ get_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user_
   bool error_state = false;
   
   
-  PRINT("-- Begin get_openlevel: interface %d\n", interfaces);
+  LOG("-- Begin get_openlevel: interface %d\n");
   oc_rep_start_root_object();
   switch (interfaces) {
   case OC_IF_BASELINE:
@@ -446,7 +542,7 @@ get_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user_
   else {
     oc_send_response(request, OC_STATUS_BAD_OPTION);
   }
-  PRINT("-- End get_openlevel\n");
+  LOG("-- End get_openlevel\n");
 }
  
 /**
@@ -470,7 +566,7 @@ post_doorstate(oc_request_t *request, oc_interface_mask_t interfaces, void *user
   (void)interfaces;
   (void)user_data;
   bool error_state = false;
-  PRINT("-- Begin post_doorstate:\n");
+  LOG("-- Begin post_doorstate:\n");
   oc_rep_t *rep = request->request_payload;
   
   /* loop over the request document for each required input field to check if all required input fields are present */
@@ -518,7 +614,7 @@ post_doorstate(oc_request_t *request, oc_interface_mask_t interfaces, void *user
       rep = rep->next;
     }
     /* set the response */
-    PRINT("Set response \n");
+    LOG("Set response \n");
     oc_rep_start_root_object();
     /*oc_process_baseline_interface(request->resource); */
     oc_rep_set_boolean(root, openAlarm, g_doorstate_openAlarm);
@@ -533,12 +629,12 @@ post_doorstate(oc_request_t *request, oc_interface_mask_t interfaces, void *user
   }
   else
   {
-    PRINT("  Returning Error \n");
+    LOG("  Returning Error \n");
     /* TODO: add error response, if any */
     //oc_send_response(request, OC_STATUS_NOT_MODIFIED);
     oc_send_response(request, OC_STATUS_BAD_REQUEST);
   }
-  PRINT("-- End post_doorstate\n");
+  LOG("-- End post_doorstate\n");
 }
  
 /**
@@ -559,7 +655,7 @@ post_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user
   (void)interfaces;
   (void)user_data;
   bool error_state = false;
-  PRINT("-- Begin post_openlevel:\n");
+  LOG("-- Begin post_openlevel:\n");
   oc_rep_t *rep = request->request_payload;
   
   /* loop over the request document for each required input field to check if all required input fields are present */
@@ -574,7 +670,7 @@ post_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user
   if ( var_in_request == false) 
   { 
       error_state = true;
-      PRINT (" required property: 'openLevel' not in request\n");
+      LOG (" required property: 'openLevel' not in request\n");
   }
   /* loop over the request document to check if all inputs are ok */
   rep = request->request_payload;
@@ -608,7 +704,7 @@ post_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user
     if (strcmp ( oc_string(rep->name), g_openlevel_RESOURCE_PROPERTY_NAME_step) == 0) {
       /* property "step" of type integer exist in payload *//* check if "step" is read only */
       error_state = true;
-      PRINT ("   property 'step' is readOnly \n");
+      LOG ("   property 'step' is readOnly \n");
       if (rep->type != OC_REP_INT) {
         error_state = true;
         PRINT ("   property 'step' is not of type int %d \n", rep->type);
@@ -650,7 +746,7 @@ post_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user
       rep = rep->next;
     }
     /* set the response */
-    PRINT("Set response \n");
+    LOG("Set response \n");
     oc_rep_start_root_object();
     /*oc_process_baseline_interface(request->resource); */
     oc_rep_set_int(root, openLevel, g_openlevel_openLevel );
@@ -669,27 +765,27 @@ post_openlevel(oc_request_t *request, oc_interface_mask_t interfaces, void *user
        the global values have been updated already with the data from the request */
   
     if(g_openlevel_openLevel > 50) {
-      PRINT("\nSending open door to actuator");
+      LOG("\nSending open door to actuator");
       open_door();
-      PRINT("\nFinished open door");
+      LOG("\nFinished open door");
     } 
     else
     {
-      PRINT("\nSending close door to actuator");
+      LOG("\nSending close door to actuator");
       close_door();
-      PRINT("\nFinished close door");
+      LOG("\nFinished close door");
     }
-    PRINT("\nsend response");
+    LOG("\nsend response");
     oc_send_response(request, OC_STATUS_CHANGED);
   }
   else
   {
-    PRINT("  Returning Error \n");
+    LOG("  Returning Error \n");
     /* TODO: add error response, if any */
     //oc_send_response(request, OC_STATUS_NOT_MODIFIED);
     oc_send_response(request, OC_STATUS_BAD_REQUEST);
   }
-  PRINT("-- End post_openlevel\n");
+  LOG("-- End post_openlevel\n");
 }
 /**
 * register all the resources to the stack
@@ -705,7 +801,7 @@ static void
 register_resources(void)
 {
 
-  PRINT("Register Resource with local path \"/doorstate\"\n");
+  LOG("Register Resource with local path \"/doorstate\"\n");
   oc_resource_t *res_doorstate = oc_new_resource(NULL, g_doorstate_RESOURCE_ENDPOINT, g_doorstate_nr_resource_types, 0);
   PRINT("     number of Resource Types: %d\n", g_doorstate_nr_resource_types);
   for( int a = 0; a < g_doorstate_nr_resource_types; a++ ) {
@@ -735,7 +831,7 @@ register_resources(void)
 #endif
   oc_add_resource(res_doorstate);
 
-  PRINT("Register Resource with local path \"/openlevel\"\n");
+  LOG("Register Resource with local path \"/openlevel\"\n");
   oc_resource_t *res_openlevel = oc_new_resource(NULL, g_openlevel_RESOURCE_ENDPOINT, g_openlevel_nr_resource_types, 0);
   PRINT("     number of Resource Types: %d\n", g_openlevel_nr_resource_types);
   for( int a = 0; a < g_openlevel_nr_resource_types; a++ ) {
@@ -767,6 +863,19 @@ register_resources(void)
  // oc_cloud_add_resource(res_openlevel);
 #endif
   oc_add_resource(res_openlevel);
+
+
+  wifi_mode supported_mode[NUM_WIFIMODE] = {WIFI_11A, WIFI_11B,WIFI_11G, WIFI_11N, WIFI_11AC, WIFI_MODE_MAX};
+  wifi_freq supported_freq[NUM_WIFIFREQ] = {WIFI_24G, WIFI_5G, WIFI_FREQ_MAX};
+  char *device_name = "MangoGarageDoor";
+
+  oc_wes_set_resource_callbacks(0, g_rsc_cbks[0].oc_wes_prov_cb_t,
+          g_rsc_cbks[0].oc_wes_wifi_prov_cb_t, g_rsc_cbks[0].oc_wes_dev_prov_cb_t);
+
+    // Set Device Info
+  if (oc_wes_set_device_info(0, supported_mode, supported_freq, device_name) == OC_ES_ERROR)
+         PRINT("oc_wes_set_device_info error!\n");
+  
 }
 
 
@@ -786,32 +895,38 @@ read_pem(const char *file_path, char *buffer, size_t *buffer_len)
 {
   FILE *fp = fopen(file_path, "r");
   if (fp == NULL) {
-    PRINT("ERROR: unable to read PEM\n");
+    char buffer[80] = "";
+    sprintf(buffer, "ERROR: unable to open PEM: %s\n", file_path);
+    LOG(buffer);
     return -1;
   }
   if (fseek(fp, 0, SEEK_END) != 0) {
-    PRINT("ERROR: unable to read PEM\n");
+    LOG("ERROR: unable to read PEM\n");
     fclose(fp);
     return -1;
   }
   long pem_len = ftell(fp);
   if (pem_len < 0) {
-    PRINT("ERROR: could not obtain length of file\n");
+    LOG("ERROR: could not obtain length of file\n");
     fclose(fp);
     return -1;
   }
   if (pem_len > (long)*buffer_len) {
-    PRINT("ERROR: buffer provided too small\n");
+    LOG("ERROR: buffer provided too small\n");
     fclose(fp);
     return -1;
   }
   if (fseek(fp, 0, SEEK_SET) != 0) {
-    PRINT("ERROR: unable to read PEM\n");
+    char buffer[80] = "";
+    sprintf(buffer, "ERROR: unable to seek PEM: %s\n", file_path);
+    LOG(buffer);
     fclose(fp);
     return -1;
   }
   if (fread(buffer, 1, pem_len, fp) < (size_t)pem_len) {
-    PRINT("ERROR: unable to read PEM\n");
+    char buffer[80] = "";
+    sprintf(buffer, "ERROR: unable to read PEM: %s\n", file_path);
+    LOG(buffer);
     fclose(fp);
     return -1;
   }
@@ -830,52 +945,47 @@ factory_presets_cb(size_t device, void *data)
 /* code to include an pki certificate and root trust anchor */
 #include "oc_pki.h"
 #include "pki_certs.h"
-  PRINT("\nFactory presets callback");
+  LOG("\nFactory presets callback");
   int credid =
     oc_pki_add_mfg_cert(0, (const unsigned char *)my_cert, strlen(my_cert), (const unsigned char *)my_key, strlen(my_key));
   if (credid < 0) {
-    PRINT("ERROR installing PKI certificate\n");
+    LOG("ERROR installing PKI certificate\n");
   } else {
-    PRINT("Successfully installed PKI certificate\n");
+    LOG("Successfully installed PKI certificate\n");
   }
 
   if (oc_pki_add_mfg_intermediate_cert(0, credid, (const unsigned char *)int_ca, strlen(int_ca)) < 0) {
-    PRINT("ERROR installing intermediate CA certificate\n");
+    LOG("ERROR installing intermediate CA certificate\n");
   } else {
-    PRINT("Successfully installed intermediate CA certificate\n");
+    LOG("Successfully installed intermediate CA certificate\n");
   }
 
   if (oc_pki_add_mfg_trust_anchor(0, (const unsigned char *)root_ca, strlen(root_ca)) < 0) {
-    PRINT("ERROR installing root certificate\n");
+    LOG("ERROR installing root certificate\n");
   } else {
-    PRINT("Successfully installed root certificate\n");
+    LOG("Successfully installed root certificate\n");
   }
 
   unsigned char cloud_ca[4096];
   size_t cert_len = 4096;
-  PRINT("Load cloudca cert from file\n");
+  LOG("Load cloudca cert from file\n");
   if (read_pem("pki_certs/cloudca.pem", (char *)cloud_ca, &cert_len) < 0) {
-    PRINT("ERROR: unable to read cloud trust anchor certificates\n");
+    LOG("ERROR: unable to read cloud trust anchor certificates\n");
     return;
   }
 
-  PRINT("Add PKI cloudca trust anchor\n");
+  LOG("Add PKI cloudca trust anchor\n");
   int rootca_credid =
     oc_pki_add_trust_anchor(0, (const unsigned char *)cloud_ca, cert_len);
   if (rootca_credid < 0) {
-    PRINT("ERROR installing cloud root cert\n");
+    LOG("ERROR installing cloud root cert\n");
     return;
   } else {
-	PRINT("Cloud PKI trust anchor added\n");  
+	LOG("Cloud PKI trust anchor added\n");  
   }
 
   oc_pki_set_security_profile(0, OC_SP_BLACK, OC_SP_BLACK, credid);
 
-  
-
-//#else
-  //  PRINT("No PKI certificates installed\n");
-//#endif /* OC_SECURITY && OC_PKI */
 }
 
 
@@ -904,18 +1014,6 @@ initialize_variables(void)
 }
 
 #ifndef NO_MAIN
-
-#ifdef WIN32
-/**
-* signal the event loop (windows version)
-* wakes up the main function to handle the next callback
-*/
-static void
-signal_event_loop(void)
-{
-  WakeConditionVariable(&cv);
-}
-#endif /* WIN32 */
 
 #ifdef __linux__
 /**
@@ -954,32 +1052,32 @@ cloud_status_handler(oc_cloud_context_t *ctx, oc_cloud_status_t status,
                      void *data)
 {
   (void)data;
-  PRINT("\nCloud Manager Status:\n");
+  LOG("\nCloud Manager Status:\n");
   if (status & OC_CLOUD_REGISTERED) {
-    PRINT("\t\t-Registered\n");
+    LOG("\t\t-Registered\n");
   }
   if (status & OC_CLOUD_TOKEN_EXPIRY) {
-    PRINT("\t\t-Token Expiry: ");
+    LOG("\t\t-Token Expiry: ");
     if (ctx) {
       PRINT("%d\n", oc_cloud_get_token_expiry(ctx));
     } else {
-      PRINT("\n");
+      LOG("\n");
     }
   }
   if (status & OC_CLOUD_FAILURE) {
-    PRINT("\t\t-Failure\n");
+    LOG("\t\t-Failure\n");
   }
   if (status & OC_CLOUD_LOGGED_IN) {
-    PRINT("\t\t-Logged In\n");
+    LOG("\t\t-Logged In\n");
   }
   if (status & OC_CLOUD_LOGGED_OUT) {
-    PRINT("\t\t-Logged Out\n");
+    LOG("\t\t-Logged Out\n");
   }
   if (status & OC_CLOUD_DEREGISTERED) {
-    PRINT("\t\t-DeRegistered\n");
+    LOG("\t\t-DeRegistered\n");
   }
   if (status & OC_CLOUD_REFRESHED_TOKEN) {
-    PRINT("\t\t-Refreshed Token\n");
+    LOG("\t\t-Refreshed Token\n");
   }
 }
 #endif // OC_CLOUD
@@ -998,7 +1096,7 @@ int init;
   oc_clock_time_t next_event;
  
  if(argc == 0) {
-   PRINT("No arguments");
+   LOG("No arguments");
  }
 
   if (argc > 1) {
@@ -1019,15 +1117,6 @@ int init;
   }
 
 
-
-#ifdef WIN32
-  /* windows specific */
-  InitializeCriticalSection(&cs);
-  InitializeConditionVariable(&cv);
-  /* install Ctrl-C */
-  signal(SIGINT, handle_signal);
-#endif
-#ifdef __linux__
   /* linux specific */
   struct sigaction sa;
   sigfillset(&sa.sa_mask);
@@ -1035,34 +1124,28 @@ int init;
   sa.sa_handler = handle_signal;
   /* install Ctrl-C */
   sigaction(SIGINT, &sa, NULL);
-#endif
 
-  PRINT("Used input file : \"../device_output/out_codegeneration_merged.swagger.json\"\n");
-  PRINT("OCF Server name : \"server_lite_4918\"\n");
+
+  PRINT("wifi: Start\n");
+
+  //1 TODO : Platform Interface
+  wifi_start_softap(SOFT_AP_SSID, SOFT_AP_PSK);
+  wifi_start_dhcp_server();
+
+  LOG("Used input file : \"../device_output/out_codegeneration_merged.swagger.json\"\n");
+  LOG("OCF Server name : \"server_lite_4918\"\n");
 
   /*intialize the variables */
   initialize_variables();
 
+
 /*
- The storage folder depends on the build system
- for Windows the projects simpleserver and cloud_server are overwritten, hence the folders should be the same as those targets.
  for Linux (as default) the folder is created in the makefile, with $target as name with _cred as post fix.
 */
 #ifdef OC_SECURITY
   PRINT("Intialize Secure Resources\n");
-#ifdef WIN32
-#ifdef OC_CLOUD
-  PRINT("\t storage at './cloudserver_creds' \n");
-  oc_storage_config("./cloudserver_creds");
-#else
-  PRINT("\t storage at './simpleserver_creds' \n");
-  oc_storage_config("./simpleserver_creds/");
-#endif
-#else
   PRINT("\t storage at './device_builder_server_creds' \n");
-  oc_storage_config("./device_builder_server_creds");
-#endif
-  
+  oc_storage_config("./device_builder_server_creds");  
 #endif /* OC_SECURITY */
 
   /* initializes the handlers structure */
@@ -1075,20 +1158,21 @@ int init;
 #endif
                                        };
 
-
-
-#ifdef OC_SECURITY
-  /* please comment out if the server:
-    - have no display capabilities to display the PIN value
-    - server does not require to implement RANDOM PIN (oic.sec.doxm.rdp) onboarding mechanism
-  */
-//  oc_set_random_pin_callback(random_pin_cb, NULL);
-#endif /* OC_SECURITY */
-
  
   oc_set_factory_presets_cb(factory_presets_cb, NULL);
   
+
+#ifdef OC_SOFTWARE_UPDATE
+  LOG("Initialize Software Update");
+  static oc_swupdate_cb_t swupdate_impl;
+  swupdate_impl.validate_purl = validate_purl;
+  swupdate_impl.check_new_version = check_new_version;
+  swupdate_impl.download_update = download_update;
+  swupdate_impl.perform_upgrade = perform_upgrade;
+  oc_swupdate_set_impl(&swupdate_impl);
   
+#endif /* OC_SOFTWARE_UPDATE */
+ 
   /* start the stack */
   init = oc_main_init(&handler);
 
@@ -1099,18 +1183,18 @@ int init;
 
 #ifdef OC_CLOUD
   /* get the cloud context and start the cloud */
-  PRINT("Start Cloud Manager\n");
+  LOG("Start Cloud Manager\n");
   oc_cloud_context_t *ctx = oc_cloud_get_context(0);
   if (ctx) {
     oc_cloud_manager_start(ctx, cloud_status_handler, NULL);
     if (cis) {
-      PRINT("Provision Cloud Conf Resource\n");
+      LOG("Provision Cloud Conf Resource\n");
       oc_cloud_provision_conf_resource(ctx, cis, auth_code, sid, apn);
     }
   }
 #endif 
 
-  PRINT("OCF server \"server_lite_4918\" running, waiting on incoming connections.\n");
+  LOG("Garage door server \"server_lite\" running, waiting on incoming connections.\n");
 
   
 #ifdef __linux__
@@ -1138,3 +1222,53 @@ int init;
   return 0;
 }
 #endif /* NO_MAIN */
+
+
+#ifdef OC_SOFTWARE_UPDATE
+int
+validate_purl(const char *purl)
+{
+  (void)purl;
+ // uri::uri instance(purl);
+ // if (instance.is_valid() == 0) {
+ //   return -1;
+ // }
+  return 0;
+}
+
+int
+check_new_version(size_t device, const char *url, const char *version)
+{
+  if (!url) {
+    oc_swupdate_notify_done(device, OC_SWUPDATE_RESULT_INVALID_URL);
+    return -1;
+  }
+  PRINT("Package url %s\n", url);
+  if (version) {
+    PRINT("Package version: %s\n", version);
+  }
+  oc_swupdate_notify_new_version_available(device, "2.0",
+                                           OC_SWUPDATE_RESULT_SUCCESS);
+  return 0;
+}
+
+int
+download_update(size_t device, const char *url)
+{
+  (void)url;
+  oc_swupdate_notify_downloaded(device, "2.0", OC_SWUPDATE_RESULT_SUCCESS);
+  return 0;
+}
+
+int
+perform_upgrade(size_t device, const char *url)
+{
+  (void)url;
+  oc_swupdate_notify_upgrading(device, "2.0", oc_clock_time(),
+                               OC_SWUPDATE_RESULT_SUCCESS);
+
+  oc_swupdate_notify_done(device, OC_SWUPDATE_RESULT_SUCCESS);
+  return 0;
+}
+
+#endif

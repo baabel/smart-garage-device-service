@@ -24,6 +24,7 @@
 #define OC_CLOUD_H
 
 #include "oc_ri.h"
+#include "oc_collection.h"
 #include "oc_client_state.h"
 #include "oc_session_events.h"
 
